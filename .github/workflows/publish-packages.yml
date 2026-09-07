@@ -1,5 +1,5 @@
 name: Publish packages
-run-name: Packages ${{ inputs.tag }} (publish=${{ inputs.publish }})
+run-name: Packages ${{ inputs.tag }} (${{ inputs.registry }}, publish=${{ inputs.publish }})
 
 on:
   workflow_dispatch:
@@ -9,9 +9,14 @@ on:
         required: true
         type: string
       publish:
-        description: Publish to npm and PyPI after validation (false only builds and checks)
+        description: Publish selected registries after validation (false only builds and checks)
         type: boolean
         default: false
+      registry:
+        description: Registries to publish (PyPI requires its own trusted publisher)
+        type: choice
+        default: all
+        options: [all, npm, pypi]
 
 permissions:
   contents: read
@@ -61,7 +66,9 @@ jobs:
           python3 scripts/package_installers.py "$RELEASE_TAG" dist/native dist/packages
           python3 scripts/smoke_installers.py --tag "$RELEASE_TAG" --assets dist/native --packages dist/packages
       - name: Check version availability and existing package integrity
-        run: python3 scripts/package_registry.py check dist/packages
+        env:
+          PACKAGE_REGISTRY: ${{ inputs.registry }}
+        run: python3 scripts/package_registry.py check dist/packages --registry "$PACKAGE_REGISTRY"
       - name: Verify the Python launcher can download the published binary
         env:
           BROKK_RELEASE_BOT_CACHE_DIR: ${{ runner.temp }}/brb-cold-cache
@@ -76,13 +83,18 @@ jobs:
         if: inputs.publish
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: python3 scripts/package_registry.py publish dist/packages
-      - name: Verify public installs
-        if: inputs.publish
+          PACKAGE_REGISTRY: ${{ inputs.registry }}
+        run: python3 scripts/package_registry.py publish dist/packages --registry "$PACKAGE_REGISTRY"
+      - name: Verify public npm install
+        if: inputs.publish && inputs.registry != 'pypi'
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: npm exec --yes --package="@brokkai/release-bot@${RELEASE_TAG#v}" -- brb --help
+      - name: Verify public PyPI install
+        if: inputs.publish && inputs.registry != 'npm'
         env:
           RELEASE_TAG: ${{ inputs.tag }}
           BROKK_RELEASE_BOT_CACHE_DIR: ${{ runner.temp }}/brb-public-cache
         run: |
-          npm exec --yes --package="@brokkai/release-bot@${RELEASE_TAG#v}" -- brb --help
           python_version=$(PYTHONPATH=scripts python3 -c 'import os, package_installers; print(package_installers.versions(os.environ["RELEASE_TAG"])[1])')
           uv tool run --isolated --from "brokk-release-bot==$python_version" brb --help

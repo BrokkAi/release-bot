@@ -113,6 +113,11 @@ keeps the SemVer spelling and publishes prereleases under `next`.
 Before the first registry publication, configure the GitHub environment
 `packages-publish` and the publishing accounts:
 
+npm's five packages already have GitHub trusted publishers configured. PyPI is
+still pending. Use `-f registry=npm` for current releases; this publishes through
+the configured npm identity without requiring a local interactive login. Keep
+PyPI out of a release's destination plan until its publisher is configured.
+
 - PyPI: add a pending trusted publisher for `brokk-release-bot`, owner `BrokkAi`,
   repository `release-bot`, workflow `publish-packages.yml`, environment
   `packages-publish`. PyPI supports [creating the project on first OIDC publication](https://docs.pypi.org/trusted-publishers/creating-a-project-through-oidc/).
@@ -141,6 +146,15 @@ trusted-publisher configuration and publishing rights before requesting writes.
 gh workflow run publish-packages.yml --repo BrokkAi/release-bot --ref v0.1.0 -f tag=v0.1.0 -F publish=true
 ```
 
+Select `-f registry=npm` or `-f registry=pypi` to check, publish and verify only
+that registry; the default `all` requires both. Packages for both installers are
+still built and tested. The CLI accepts the same selection with `--registry`:
+
+```sh
+gh workflow run publish-packages.yml --repo BrokkAi/release-bot --ref v0.3.0 -f tag=v0.3.0 -f registry=npm -F publish=true
+python3 scripts/package_registry.py verify dist/packages --registry npm
+```
+
 Publication checks every existing package for conflicts before uploading, publishes
 and verifies all four npm platform packages before the root package, then publishes
 the Python distributions with uv's [trusted publishing](https://docs.astral.sh/uv/guides/package/).
@@ -149,14 +163,14 @@ existing files only when their hashes match the staged bytes; partial Python
 uploads resume through `uv publish --check-url`. Preserve validated artifacts if
 toolchain changes make a later rebuild differ. Never overwrite conflicting versions.
 
-When driving this repository with the bot, enumerate GitHub, all five npm packages,
-and PyPI in the publication plan. Include `publish-packages.yml` in its required
+When driving this repository with the bot, enumerate GitHub and all packages in
+the selected registries in the publication plan. Include `publish-packages.yml` in its required
 workflows and verify registry publication separately; the existing
 `release_check.py published` command verifies only the native GitHub destination.
 GitHub assets must be public before the Python launcher can download them, so
 registry failure can leave a partial release. Reconcile it by rerunning the package
-workflow for the same tag; do not mark the overall release successful until both
-registries pass verification. Installer packaging can be validated locally before
+workflow for the same tag and registry selection; do not mark the overall release
+successful until every selected destination passes verification. Installer packaging can be validated locally before
 publishing GitHub assets:
 
 ```sh

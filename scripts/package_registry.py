@@ -64,7 +64,9 @@ def wait_visible(check):
     raise ValueError("published package did not become visible within 60 seconds; retry verification")
 
 
-def run(command, directory):
+def run(command, directory, registry="all"):
+    if registry not in ("all", "npm", "pypi"):
+        raise ValueError("registry must be all, npm or pypi")
     manifest = json.loads((directory / "npm/manifest.json").read_text())
     npm_version, python_version = package_installers.versions(manifest["tag"])
     expected_names = {package_installers.NPM_ROOT} | {
@@ -79,17 +81,19 @@ def run(command, directory):
             raise ValueError("invalid npm package version or filename")
         if release.digest((directory / "npm" / package["filename"]).read_bytes()) != package["sha256"]:
             raise ValueError(f"corrupt staged npm package: {package['filename']}")
-    expected_python = python_files(directory / "python")
+    if registry == "pypi":
+        packages = []
+    expected_python = python_files(directory / "python") if registry != "npm" else {}
     # Discover conflicts in every destination before making the first write.
     existing = {p["name"]: npm_exists(p) for p in packages}
-    existing_python = python_exists(python_version, expected_python)
+    existing_python = python_exists(python_version, expected_python) if expected_python else True
     if command == "check":
         print("Package versions are available or identical. This checks availability, not publishing authorization.")
         return
     if command == "verify":
         if not all(existing.values()) or not existing_python:
-            raise ValueError("publication is incomplete: an npm package or Python distribution is missing")
-        print("All five npm packages and both Python distributions match the staged bytes")
+            raise ValueError("publication is incomplete: a selected package or distribution is missing")
+        print(f"All selected packages ({registry}) match the staged bytes")
         return
     for package in packages:
         if not existing[package["name"]]:
@@ -99,17 +103,19 @@ def run(command, directory):
         wait_visible(lambda: npm_exists(package))
     if not existing_python:
         subprocess.run(["uv", "publish", "--trusted-publishing", "always", "--check-url", "https://pypi.org/simple/",
-                        *[str(p.resolve()) for p in sorted((directory / "python").iterdir())]], check=True)
-    wait_visible(lambda: python_exists(python_version, expected_python))
-    print("Published and verified npm and PyPI packages")
+                        *[str((directory / "python" / name).resolve()) for name in expected_python]], check=True)
+    if expected_python:
+        wait_visible(lambda: python_exists(python_version, expected_python))
+    print(f"Published and verified selected packages ({registry})")
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=("check", "publish", "verify"))
     parser.add_argument("directory", type=Path)
+    parser.add_argument("--registry", choices=("all", "npm", "pypi"), default="all")
     args = parser.parse_args()
-    run(args.command, args.directory)
+    run(args.command, args.directory, args.registry)
 
 
 if __name__ == "__main__":

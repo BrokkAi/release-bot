@@ -61,7 +61,23 @@ class PackageRegistry(unittest.TestCase):
             self.assertTrue(all(call[:2] == ["npm", "publish"] for call in calls[:5]))
             self.assertTrue(calls[4][2].endswith("package-0.tgz"))
             self.assertEqual(calls[5][:2], ["uv", "publish"])
+            self.assertFalse(any(value.endswith(".gitignore") for value in calls[5]))
             self.assertEqual(wait.call_count, 6)
+
+    def test_selected_registry_never_contacts_or_publishes_the_other(self):
+        for registry, expected_calls in (("npm", 5), ("pypi", 1)):
+            with self.subTest(registry=registry), \
+                    patch.object(package_registry, "npm_exists", return_value=False) as npm, \
+                    patch.object(package_registry, "python_exists", return_value=False) as python, \
+                    patch.object(package_registry, "wait_visible"), \
+                    patch.object(package_registry.subprocess, "run") as command:
+                package_registry.run("publish", self.root, registry)
+                calls = [call.args[0] for call in command.call_args_list]
+                self.assertEqual(len(calls), expected_calls)
+                self.assertTrue(all(call[0] == ("npm" if registry == "npm" else "uv") for call in calls))
+                (python if registry == "npm" else npm).assert_not_called()
+                with self.assertRaisesRegex(ValueError, "incomplete"):
+                    package_registry.run("verify", self.root, registry)
 
     def test_identical_existing_packages_are_verified_without_upload(self):
         with patch.object(package_registry, "npm_exists", return_value=True), \
