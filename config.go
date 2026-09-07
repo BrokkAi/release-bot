@@ -193,12 +193,12 @@ func (c Config) Validate() error {
 			return errors.New("required workflow cannot be empty")
 		}
 	}
-	for _, d := range []Duration{c.Poll, c.Daily, c.MinimumGap, c.BurstWindow, c.Timeout, c.VerificationTimeout, c.RetryDelay} {
+	for _, d := range []Duration{c.Poll, c.Daily, c.BurstWindow, c.Timeout, c.VerificationTimeout, c.RetryDelay} {
 		if d <= 0 {
-			return errors.New("poll, daily, minimum_gap, burst_window, timeout, verification_timeout and retry_delay must be positive")
+			return errors.New("poll, daily, burst_window, timeout, verification_timeout and retry_delay must be positive")
 		}
 	}
-	if c.Quiet < 0 || c.Burst < 0 || c.Attempts < 1 || c.MinimumGap > c.Daily {
+	if c.Quiet < 0 || c.MinimumGap < 0 || c.Burst < 0 || c.Attempts < 1 || c.MinimumGap > c.Daily {
 		return errors.New("invalid schedule or retry limits")
 	}
 	return nil

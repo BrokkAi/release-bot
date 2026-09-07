@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	bot "github.com/BrokkAi/release-bot"
 )
@@ -252,6 +253,55 @@ func TestBurstFlagAndConfiguration(t *testing.T) {
 		})
 		if err == nil {
 			t.Fatalf("invalid burst accepted: %s", value)
+		}
+	}
+}
+
+func TestEarlyReleaseDurationFlags(t *testing.T) {
+	source := cliRepository(t)
+	cfg, err := bot.Discover(context.Background(), source, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.MinimumGap, cfg.Quiet = bot.Duration(time.Hour), bot.Duration(3*time.Minute)
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(file, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		args       []string
+		gap, quiet time.Duration
+	}{
+		{[]string{source}, 2 * time.Hour, 15 * time.Minute},
+		{[]string{source, "--minimum-gap", "10m", "--quiet", "30s"}, 10 * time.Minute, 30 * time.Second},
+		{[]string{"--quiet=0", source, "--minimum-gap=0"}, 0, 0},
+		{[]string{"--config", file}, time.Hour, 3 * time.Minute},
+		{[]string{"--config", file, "--quiet=1m"}, time.Hour, time.Minute},
+		{[]string{"--config", file, "--minimum-gap=5m"}, 5 * time.Minute, 3 * time.Minute},
+		{[]string{"--config", file, "--minimum-gap=0", "--quiet=0"}, 0, 0},
+	} {
+		called := false
+		err := executeWithRun(context.Background(), tc.args, slog.New(slog.NewTextHandler(io.Discard, nil)), func(ctx context.Context, cfg bot.Config, log *slog.Logger, once, force bool) error {
+			called = true
+			if time.Duration(cfg.MinimumGap) != tc.gap || time.Duration(cfg.Quiet) != tc.quiet {
+				t.Fatalf("%v: gap=%s quiet=%s", tc.args, time.Duration(cfg.MinimumGap), time.Duration(cfg.Quiet))
+			}
+			return nil
+		})
+		if err != nil || !called {
+			t.Fatalf("%v: %v", tc.args, err)
+		}
+	}
+	for _, arg := range []string{"--minimum-gap=-1s", "--quiet=-1m", "--quiet=bad", "--minimum-gap=25h"} {
+		if err := executeWithRun(context.Background(), []string{source, arg}, slog.Default(), func(context.Context, bot.Config, *slog.Logger, bool, bool) error {
+			t.Fatal("invalid duration started work")
+			return nil
+		}); err == nil {
+			t.Fatalf("accepted %s", arg)
 		}
 	}
 }
