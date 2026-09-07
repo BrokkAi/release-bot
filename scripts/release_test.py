@@ -21,7 +21,7 @@ class ReleaseAssets(unittest.TestCase):
             name = release.archive_name(self.tag, target)
             path = self.directory / name
             release.archive(path, {
-                "release-bot": b"fixture executable", "LICENSE": b"fixture license", "README.md": b"fixture readme",
+                "brb": b"fixture executable", "LICENSE": b"fixture license", "README.md": b"fixture readme",
                 "BUILD.json": json.dumps({"tag": self.tag, "commit": self.sha, "target": target}).encode(),
             }, 100)
             self.manifest["assets"].append({"name": name, "size": path.stat().st_size, "sha256": release.digest(path.read_bytes())})
@@ -138,7 +138,7 @@ class ReleaseAssets(unittest.TestCase):
                 github.verify_assets({"id": 1}, self.directory)
 
     def test_rebuilt_contents_must_match_even_with_self_consistent_checksums(self):
-        for member in ("release-bot", "README.md", "LICENSE", "BUILD.json"):
+        for member in ("brb", "README.md", "LICENSE", "BUILD.json"):
             with self.subTest(member=member):
                 remote = self.remote_package()
                 path = remote / release.archive_name(self.tag, release.TARGETS[0])

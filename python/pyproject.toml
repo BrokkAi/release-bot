@@ -1,0 +1,25 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "brokk-release-bot"
+version = "0.0.0"
+description = "Brokk Release Bot: autonomous releases through Agent Client Protocol"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+dependencies = []
+
+[project.urls]
+Repository = "https://github.com/BrokkAi/release-bot"
+
+[project.scripts]
+brb = "brokk_release_bot.launcher:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["brokk_release_bot"]
+
+[tool.hatch.build.targets.sdist]
+include = ["/brokk_release_bot", "/pyproject.toml", "/README.md", "/LICENSE"]

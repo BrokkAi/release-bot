@@ -53,7 +53,7 @@ func executeWithRun(ctx context.Context, args []string, logger *slog.Logger, run
 	}
 	flags := flag.NewFlagSet(mode, flag.ContinueOnError)
 	flags.Usage = func() {
-		fmt.Fprintln(flags.Output(), "Usage: release-bot [repository path or URL] [options]\n\nRun inside a repository to detect its remote and default branch and start working.\nNo configuration file is needed. Repository instructions and checks are discovered\nby the agent. Existing run, once, status and retry commands are also supported.\n\nOptions:")
+		fmt.Fprintln(flags.Output(), "Usage: brb [repository path or URL] [options]\n\nRun inside a repository to detect its remote and default branch and start working.\nNo configuration file is needed. Repository instructions and checks are discovered\nby the agent. Existing run, once, status and retry commands are also supported.\n\nOptions:")
 		flags.PrintDefaults()
 	}
 	file := flags.String("config", "", "optional JSON configuration for advanced settings")

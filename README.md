@@ -1,8 +1,53 @@
-# release-bot
+# Brokk Release Bot
 
 An autonomous release daemon in Go. It monitors one repository, drives a configurable coding agent over Agent Client Protocol (ACP), and verifies publication before recording a successful release. Codex through `codex-acp` is the default agent.
 
 The Go code uses only the standard library. The `acp` package is a new implementation of the [ACP v1 specification](https://agentclientprotocol.com/protocol/v1/overview), with no third-party SDK or generated SDK code. This project has no HTTP server.
+
+## Install
+
+The command is **`brb`**. Choose one installation method; supported platforms are Linux and macOS on amd64 and arm64.
+
+**Go** (Go 1.27.1 or newer):
+
+```sh
+go install github.com/BrokkAi/release-bot/cmd/brb@latest
+```
+
+Go installs `brb` into `GOBIN`, or `$(go env GOPATH)/bin` by default. Add that directory to your `PATH`. Replace `@latest` with a release tag such as `@v0.1.0` to pin a version. See the [Go installation reference](https://go.dev/ref/mod#go-install). From a source checkout, use `go install ./cmd/brb`, or `make build` to produce `bin/brb`.
+
+**curl** (prebuilt binary, no Go required):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/BrokkAi/release-bot/master/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+The installer downloads the latest stable GitHub release, verifies its SHA-256 checksum, and installs `brb` in `~/.local/bin`. Add the PATH line to your shell profile to keep it across sessions. Rerun to upgrade. To select a release and destination:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/BrokkAi/release-bot/master/install.sh | INSTALL_DIR="$HOME/.local/bin" sh -s -- v0.1.0
+```
+
+**npm** (Node.js 18 or newer):
+
+```sh
+npm install -g @brokkai/release-bot
+brb --help
+```
+
+The npm package installs the matching native binary through an optional platform dependency. Keep optional dependencies enabled. For a one-off invocation, use `npx --yes @brokkai/release-bot --help`. Rerun the install command with `@latest` to upgrade, or append a version such as `@0.1.0` to pin it.
+
+**uv** (Python 3.10 or newer):
+
+```sh
+uv tool install brokk-release-bot
+brb --help
+```
+
+For a one-off invocation, use `uvx --from brokk-release-bot brb --help`. The Python package downloads its exact native release on first use and checks archive and binary hashes embedded in the package. Later launches use the verified cache under `$XDG_CACHE_HOME/brokk-release-bot` or `~/.cache/brokk-release-bot`; `BROKK_RELEASE_BOT_CACHE_DIR` overrides it. Use `uv tool upgrade brokk-release-bot` to upgrade, or install `brokk-release-bot==0.1.0` to pin it. Run `uv tool update-shell` if the tool directory is missing from your PATH.
+
+The curl installer requires a published GitHub release. npm and uv require the corresponding registry publication; see [RELEASING.md](RELEASING.md) for first-publication setup.
 
 ## Run
 
@@ -10,7 +55,7 @@ Start it in the repository you want released:
 
 ```sh
 cd /path/to/your-repo
-release-bot
+brb
 ```
 
 No configuration file is needed. The bot detects `origin` (or the only remote) and the repository's default branch, sets up its own checkout, and starts checking for releases. It works from subdirectories too. The agent reads the repository's instructions and discovers release workflows, destinations and publishability checks. Your existing working tree and uncommitted edits are left alone; releases use the remote branch's committed history.
@@ -20,29 +65,29 @@ If the repository has no release process, the agent is instructed to create it: 
 You can also point it at a repository directly:
 
 ```sh
-release-bot /path/to/repo
-release-bot https://github.com/OWNER/REPO.git
-release-bot --branch main --once
-release-bot --agent your-acp-agent --agent-arg=--stdio
-release-bot --model YOUR_MODEL_ID
-release-bot --model YOUR_MODEL_ID --effort low
-release-bot status
+brb /path/to/repo
+brb https://github.com/OWNER/REPO.git
+brb --branch main --once
+brb --agent your-acp-agent --agent-arg=--stdio
+brb --model YOUR_MODEL_ID
+brb --model YOUR_MODEL_ID --effort low
+brb status
 ```
 
 `--once` performs one scheduled check or recovery attempt and exits. It can publish a release. `--once --force` skips cadence checks but still requires new commits. `status` shows progress without launching an agent. `retry` resets the pending release's attempt budget and resumes work; stop an already-running daemon before using it. Existing `run` and `once` subcommands also work. Flags can appear before or after the repository argument. Use `--help` for options.
 
 The default workspace lives under `$XDG_STATE_HOME/release-bot` or `~/.local/state/release-bot`, with separate checkout/state directories keyed by remote and branch. Restarting the same command reuses them. Both directories are locked against concurrent local processes, and the OS releases locks after crashes. Run only one bot per remote/branch across machines; there is no distributed lock.
 
-## Install and optional configuration
+## Runtime requirements and optional configuration
 
-From this source checkout, run `go install ./cmd/release-bot` (Go 1.27.1), or `make build` to produce `bin/release-bot`. Runtime requirements are Linux/macOS, Git, Codex (or another authenticated ACP agent), and `gh` for GitHub repositories. Existing agent, Git and registry credentials are used. If `codex-acp` is installed, the bot uses it. Otherwise it automatically launches the maintained [Codex ACP adapter](https://github.com/agentclientprotocol/codex-acp) through `npx --yes @agentclientprotocol/codex-acp`; Node.js must be installed and the first launch may download the adapter.
+Runtime requirements are Linux/macOS, Git, Codex (or another authenticated ACP agent), and `gh` for GitHub repositories. Existing agent, Git and registry credentials are used. If `codex-acp` is installed, the bot uses it. Otherwise it automatically launches the maintained [Codex ACP adapter](https://github.com/agentclientprotocol/codex-acp) through `npx --yes @agentclientprotocol/codex-acp`; Node.js must be installed and the first launch may download the adapter.
 
-Advanced settings are optional: `release-bot --config /path/to/release-bot.json` uses an explicit configuration, with paths relative to that file. The [example](release-bot.example.json) shows available settings. A config file is not auto-created or implicitly loaded. Use `--json` for machine-readable logs and status. Explicit agent commands are used exactly as configured.
+Advanced settings are optional: `brb --config /path/to/release-bot.json` uses an explicit configuration, with paths relative to that file. The [example](release-bot.example.json) shows available settings. A config file is not auto-created or implicitly loaded. Use `--json` for machine-readable logs and status. Explicit agent commands are used exactly as configured.
 
 Select a model with a flag:
 
 ```sh
-release-bot --model YOUR_MODEL_ID
+brb --model YOUR_MODEL_ID
 ```
 
 The flag works with Codex and other agents that advertise ACP model selection. The bot selects and confirms it before sending each preparation or publication prompt. Unknown model IDs report the agent's available choices; unsupported selection fails explicitly. Without the flag, the agent's default applies. An optional `agent.model` config value persists the choice; `--model` overrides it.
@@ -51,7 +96,7 @@ Set reasoning effort with `--effort low` (or another value advertised by your ag
 
 ## Cadence and recovery
 
-By default the bot polls every five minutes and aims to release every 24 hours when there are unreleased commits. It may release earlier after 5 unreleased commits within two hours, provided two hours have elapsed since the last successful release and the branch has been quiet for 15 minutes. The daily deadline ignores the quiet period so continuous commits cannot starve releases. Override the commit threshold at startup with `--burst 3`, for example `./bin/release-bot --model gpt-5.6-luna --effort xhigh --burst 3`. The flag overrides `burst` in a configuration file; omitting it preserves the configured value. Use `--burst 0` (or configure `burst` as zero) to disable earlier releases.
+By default the bot polls every five minutes and aims to release every 24 hours when there are unreleased commits. It may release earlier after 5 unreleased commits within two hours, provided two hours have elapsed since the last successful release and the branch has been quiet for 15 minutes. The daily deadline ignores the quiet period so continuous commits cannot starve releases. Override the commit threshold at startup with `--burst 3`, for example `./bin/brb --model gpt-5.6-luna --effort xhigh --burst 3`. The flag overrides `burst` in a configuration file; omitting it preserves the configured value. Use `--burst 0` (or configure `burst` as zero) to disable earlier releases.
 
 Adjust the early-release delays with `--minimum-gap 10m --quiet 1m`. Both accept durations such as `30s`, `5m`, or `1h` and override the corresponding configuration values (`minimum_gap` and `quiet`). Set either to `0` to disable that delay. Omitting the flags preserves configured values, or the defaults of two hours and 15 minutes. The commit threshold, burst window, and polling interval still apply.
 

@@ -36,7 +36,7 @@ def validate_tag(tag):
 
 
 def archive_name(tag, target):
-    return f"release-bot-{tag}-{target}.tar.gz"
+    return f"brokk-release-bot-{tag}-{target}.tar.gz"
 
 
 def archive(path, files, timestamp):
@@ -46,7 +46,7 @@ def archive(path, files, timestamp):
             for name, data in sorted(files.items()):
                 entry = tarfile.TarInfo(name)
                 entry.size = len(data)
-                entry.mode = 0o755 if name == "release-bot" else 0o644
+                entry.mode = 0o755 if name == "brb" else 0o644
                 entry.mtime = timestamp
                 tar.addfile(entry, io.BytesIO(data))
 
@@ -62,15 +62,15 @@ def package(tag, directory):
     timestamp = int(run("git", "show", "-s", "--format=%ct", sha))
     manifest = {"tag": tag, "commit": sha, "assets": []}
     with tempfile.TemporaryDirectory() as temp:
-        binary = Path(temp) / "release-bot"
+        binary = Path(temp) / "brb"
         for target in TARGETS:
             goos, goarch = target.split("-")
             env = dict(os.environ, CGO_ENABLED="0", GOOS=goos, GOARCH=goarch)
-            run("go", "build", "-trimpath", "-buildvcs=false", "-ldflags=-s -w", "-o", str(binary), "./cmd/release-bot", env=env)
+            run("go", "build", "-trimpath", "-buildvcs=false", "-ldflags=-s -w", "-o", str(binary), "./cmd/brb", env=env)
             metadata = {"tag": tag, "commit": sha, "target": target}
             name = archive_name(tag, target)
             archive(directory / name, {
-                "release-bot": binary.read_bytes(),
+                "brb": binary.read_bytes(),
                 "LICENSE": Path("LICENSE").read_bytes(),
                 "README.md": Path("README.md").read_bytes(),
                 "BUILD.json": json.dumps(metadata, sort_keys=True).encode() + b"\n",
@@ -103,11 +103,11 @@ def verify_local(tag, directory, sha):
             raise ValueError(f"corrupt release asset: {path.name}")
         with tarfile.open(path, "r:gz") as tar:
             entries = tar.getmembers()
-            if len(entries) != 4 or {m.name for m in entries} != {"release-bot", "LICENSE", "README.md", "BUILD.json"}:
+            if len(entries) != 4 or {m.name for m in entries} != {"brb", "LICENSE", "README.md", "BUILD.json"}:
                 raise ValueError("archive has missing or unexpected contents")
             if any(not m.isfile() or m.size <= 0 for m in entries):
                 raise ValueError("archive contains an invalid entry")
-            if tar.getmember("release-bot").mode & 0o111 == 0:
+            if tar.getmember("brb").mode & 0o111 == 0:
                 raise ValueError("release binary is not executable")
             metadata = json.load(tar.extractfile("BUILD.json"))
             target = next(t for t in TARGETS if archive_name(tag, t) == path.name)

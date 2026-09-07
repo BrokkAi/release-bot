@@ -1,0 +1,88 @@
+name: Publish packages
+run-name: Packages ${{ inputs.tag }} (publish=${{ inputs.publish }})
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing published release tag, such as v0.1.0 (dispatch from this tag)
+        required: true
+        type: string
+      publish:
+        description: Publish to npm and PyPI after validation (false only builds and checks)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-bot-packages
+  cancel-in-progress: false
+
+jobs:
+  packages:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: packages-publish
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Require the exact release tag
+        env:
+          RELEASE_REF: ${{ github.ref }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: test "$RELEASE_REF" = "refs/tags/$RELEASE_TAG"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          version: '0.12.3'
+      - name: Download the published native assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          test "$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)" = false
+          gh release download "$RELEASE_TAG" --dir dist/native
+      - name: Test launchers and build packages from verified assets
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          python3 -m unittest discover -s scripts -p '*_test.py' -v
+          node --test --test-isolation=none npm/brb.test.cjs
+          python3 scripts/package_installers.py "$RELEASE_TAG" dist/native dist/packages
+          python3 scripts/smoke_installers.py --tag "$RELEASE_TAG" --assets dist/native --packages dist/packages
+      - name: Check version availability and existing package integrity
+        run: python3 scripts/package_registry.py check dist/packages
+      - name: Verify the Python launcher can download the published binary
+        env:
+          BROKK_RELEASE_BOT_CACHE_DIR: ${{ runner.temp }}/brb-cold-cache
+        run: uv tool run --isolated --from dist/packages/python/*.whl brb --help
+      - name: Save validated packages for review and bootstrap publication
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: packages-${{ inputs.tag }}
+          path: dist/packages/
+          if-no-files-found: error
+      - name: Publish and verify every package
+        if: inputs.publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: python3 scripts/package_registry.py publish dist/packages
+      - name: Verify public installs
+        if: inputs.publish
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          BROKK_RELEASE_BOT_CACHE_DIR: ${{ runner.temp }}/brb-public-cache
+        run: |
+          npm exec --yes --package="@brokkai/release-bot@${RELEASE_TAG#v}" -- brb --help
+          python_version=$(PYTHONPATH=scripts python3 -c 'import os, package_installers; print(package_installers.versions(os.environ["RELEASE_TAG"])[1])')
+          uv tool run --isolated --from "brokk-release-bot==$python_version" brb --help

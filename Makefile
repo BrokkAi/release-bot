@@ -1,6 +1,6 @@
 .PHONY: build test check
 build:
-	go build -o bin/release-bot ./cmd/release-bot
+	go build -o bin/brb ./cmd/brb
 test:
 	go test -race ./...
 check: test

@@ -66,7 +66,7 @@ def build():
         raise ValueError("tracked Go files are not formatted")
     release.run("go", "test", "-race", "./...")
     release.run("go", "vet", "./...")
-    release.run("go", "build", "-o", os.devnull, "./cmd/release-bot")
+    release.run("go", "build", "-o", os.devnull, "./cmd/brb")
     release.run("python3", "-m", "unittest", "discover", "-s", "scripts", "-p", "*_test.py", "-v")
     with tempfile.TemporaryDirectory() as temporary:
         directory = Path(temporary)

@@ -1,15 +1,22 @@
-# Releasing release-bot
+# Releasing Brokk Release Bot
 
 This repository publishes a GitHub release containing four archives: Linux and
-macOS, each for amd64 and arm64. Every archive contains `release-bot`, the Apache
+macOS, each for amd64 and arm64. Every archive contains `brb`, the Apache
 2.0 `LICENSE`, `README.md`, and `BUILD.json` identifying its exact commit, version,
-and platform. `checksums.txt` and `release.json` accompany the archives. There are
-no package registry, container, signing, or notarization destinations currently.
+and platform. Archives are named `brokk-release-bot-TAG-OS-ARCH.tar.gz`;
+`checksums.txt` and `release.json` accompany them. The same binaries are distributed
+through npm as `@brokkai/release-bot` and through the PyPI launcher
+`brokk-release-bot` for uv. Every method installs the `brb` command.
+The Go module remains `github.com/BrokkAi/release-bot`, with its command at `cmd/brb`.
+Pushing a semantic version tag makes the module installable with `go install`;
+there is no separate Go registry upload. Existing state stays under `release-bot`.
 
 ## Checks on every change
 
 `ci.yml` runs on pushes, pull requests, and manual dispatch. It checks formatting,
 race tests, `go vet`, the CLI build/help, and release tooling on Linux and macOS.
+It also tests curl and Python checksum failures, npm argument/signal forwarding,
+builds all installer packages, and smoke-tests actual local npm and uv installs.
 Actionlint checks workflow syntax and shell commands. Official actions are pinned
 to commits; Dependabot proposes updates weekly.
 
@@ -87,6 +94,83 @@ assets, validates the downloads against their own published manifest and
 checksums, then compares every unpacked file and its permissions with the rebuild.
 Gzip encoding may differ across machines even when the archive contents are
 identical. Same-job staging checks still compare exact uploaded bytes.
+
+## npm and PyPI installers
+
+The installer packaging follows the sibling Anvil and Mjolnir projects: npm uses
+four native platform packages plus a launcher, and Python uses a small launcher
+that downloads a pinned GitHub archive. Python packages embed the archive and
+binary hashes, so no Go toolchain or curl is required by either package manager.
+The Python launcher replaces itself with `brb`; the npm launcher forwards
+arguments, terminal streams, exit status, and termination signals.
+
+`scripts/package_installers.py` validates all native archives against the release
+manifest and the checkout's exact commit before packaging. Versions come from the
+tag. Use `vX.Y.Z`, `vX.Y.Z-alpha.N`, `vX.Y.Z-beta.N`, or `vX.Y.Z-rc.N`:
+Python maps these prereleases to `X.Y.ZaN`, `X.Y.ZbN`, and `X.Y.ZrcN`, while npm
+keeps the SemVer spelling and publishes prereleases under `next`.
+
+Before the first registry publication, configure the GitHub environment
+`packages-publish` and the publishing accounts:
+
+- PyPI: add a pending trusted publisher for `brokk-release-bot`, owner `BrokkAi`,
+  repository `release-bot`, workflow `publish-packages.yml`, environment
+  `packages-publish`. PyPI supports [creating the project on first OIDC publication](https://docs.pypi.org/trusted-publishers/creating-a-project-through-oidc/).
+- npm: establish publishing rights for `@brokkai/release-bot` and
+  `@brokkai/release-bot-{linux,darwin}-{x64,arm64}` (five packages total).
+  Configure each package's [trusted publisher](https://docs.npmjs.com/trusted-publishers/)
+  with the same repository, workflow, and environment. If an initial publication
+  needs a token, the workflow accepts an authorized granular token in the
+  environment's `NPM_TOKEN` secret. Remove it after OIDC is configured.
+
+Publish the native GitHub release first, then dispatch the package workflow
+**from that exact tag**, which must include these installer changes:
+
+```sh
+gh workflow run publish-packages.yml --repo BrokkAi/release-bot --ref v0.1.0 -f tag=v0.1.0
+```
+
+The default run downloads and verifies the published native assets, builds the
+five npm tarballs and Python wheel/sdist, tests local installation, checks
+registry version availability, and tests the Python launcher's cold download.
+It saves the packages as a workflow artifact. These checks make no registry
+writes and do **not** establish publishing authorization. Verify the actual
+trusted-publisher configuration and publishing rights before requesting writes.
+
+```sh
+gh workflow run publish-packages.yml --repo BrokkAi/release-bot --ref v0.1.0 -f tag=v0.1.0 -F publish=true
+```
+
+Publication checks every existing package for conflicts before uploading, publishes
+and verifies all four npm platform packages before the root package, then publishes
+the Python distributions with uv's [trusted publishing](https://docs.astral.sh/uv/guides/package/).
+The workflow finishes with public npm and uv install smoke tests. Retries accept
+existing files only when their hashes match the staged bytes; partial Python
+uploads resume through `uv publish --check-url`. Preserve validated artifacts if
+toolchain changes make a later rebuild differ. Never overwrite conflicting versions.
+
+When driving this repository with the bot, enumerate GitHub, all five npm packages,
+and PyPI in the publication plan. Include `publish-packages.yml` in its required
+workflows and verify registry publication separately; the existing
+`release_check.py published` command verifies only the native GitHub destination.
+GitHub assets must be public before the Python launcher can download them, so
+registry failure can leave a partial release. Reconcile it by rerunning the package
+workflow for the same tag; do not mark the overall release successful until both
+registries pass verification. Installer packaging can be validated locally before
+publishing GitHub assets:
+
+```sh
+python3 scripts/package_installers.py v0.1.0 dist/native dist/packages
+python3 scripts/smoke_installers.py --tag v0.1.0 --assets dist/native --packages dist/packages
+python3 scripts/package_registry.py check dist/packages
+python3 scripts/package_registry.py verify dist/packages
+```
+
+The first two commands build/test; `check` reads registry availability and
+integrity; `verify` requires all files to be public and identical. For a clean
+checkout, `python3 scripts/smoke_installers.py` builds native assets and packages
+in temporary directories and smoke-tests both installers without publishing.
+Package tooling additionally requires Node.js/npm and uv; CI tests Node.js 24.
 
 ## Recovery and local tooling
 

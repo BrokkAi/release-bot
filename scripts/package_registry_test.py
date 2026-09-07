@@ -1,0 +1,103 @@
+import json
+from pathlib import Path
+import tempfile
+import unittest
+import urllib.error
+from unittest.mock import patch
+
+import package_installers
+import package_registry
+import release
+
+
+class PackageRegistry(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        (self.root / "npm").mkdir()
+        (self.root / "python").mkdir()
+        self.packages = []
+        names = [package_installers.NPM_ROOT] + [
+            f"{package_installers.NPM_ROOT}-{system}-{arch}"
+            for system in ("linux", "darwin") for arch in ("x64", "arm64")
+        ]
+        for index, name in enumerate(names):
+            filename = f"package-{index}.tgz"
+            data = name.encode()
+            (self.root / "npm" / filename).write_bytes(data)
+            self.packages.append({"name": name, "version": "0.1.0", "filename": filename,
+                                  "sha256": release.digest(data), "integrity": "sha512-fixture"})
+        (self.root / "npm/manifest.json").write_text(json.dumps({"tag": "v0.1.0", "commit": "a" * 40, "packages": self.packages}))
+        for name in ("brokk_release_bot-0.1.0-py3-none-any.whl", "brokk_release_bot-0.1.0.tar.gz"):
+            (self.root / "python" / name).write_bytes(b"python fixture")
+
+    def test_read_only_check_never_publishes(self):
+        with patch.object(package_registry, "npm_exists", return_value=False), \
+                patch.object(package_registry, "python_exists", return_value=False), \
+                patch.object(package_registry.subprocess, "run") as command:
+            package_registry.run("check", self.root)
+            command.assert_not_called()
+            with self.assertRaisesRegex(ValueError, "incomplete"):
+                package_registry.run("verify", self.root)
+
+    def test_conflicts_in_later_destination_prevent_all_writes(self):
+        with patch.object(package_registry, "npm_exists", return_value=False), \
+                patch.object(package_registry, "python_exists", side_effect=ValueError("conflicting PyPI bytes")), \
+                patch.object(package_registry.subprocess, "run") as command:
+            with self.assertRaisesRegex(ValueError, "conflicting"):
+                package_registry.run("publish", self.root)
+            command.assert_not_called()
+
+    def test_native_packages_publish_before_root_then_python(self):
+        with patch.object(package_registry, "npm_exists", return_value=False), \
+                patch.object(package_registry, "python_exists", return_value=False), \
+                patch.object(package_registry, "wait_visible") as wait, \
+                patch.object(package_registry.subprocess, "run") as command:
+            package_registry.run("publish", self.root)
+            calls = [call.args[0] for call in command.call_args_list]
+            self.assertEqual(len(calls), 6)
+            self.assertTrue(all(call[:2] == ["npm", "publish"] for call in calls[:5]))
+            self.assertTrue(calls[4][2].endswith("package-0.tgz"))
+            self.assertEqual(calls[5][:2], ["uv", "publish"])
+            self.assertEqual(wait.call_count, 6)
+
+    def test_identical_existing_packages_are_verified_without_upload(self):
+        with patch.object(package_registry, "npm_exists", return_value=True), \
+                patch.object(package_registry, "python_exists", return_value=True), \
+                patch.object(package_registry.subprocess, "run") as command:
+            package_registry.run("publish", self.root)
+            package_registry.run("verify", self.root)
+            command.assert_not_called()
+
+    def test_changed_local_tarball_prevents_remote_reads(self):
+        (self.root / "npm" / self.packages[0]["filename"]).write_bytes(b"corrupted")
+        with patch.object(package_registry, "fetch_json") as fetch:
+            with self.assertRaisesRegex(ValueError, "corrupt staged"):
+                package_registry.run("publish", self.root)
+            fetch.assert_not_called()
+
+    def test_npm_integrity_conflict(self):
+        record = dict(self.packages[0], dist={"integrity": "sha512-different"})
+        with patch.object(package_registry, "fetch_json", return_value=record):
+            with self.assertRaisesRegex(ValueError, "differs"):
+                package_registry.npm_exists(self.packages[0])
+
+    def test_python_partial_upload_and_conflict(self):
+        expected = package_registry.python_files(self.root / "python")
+        name, checksum = next(iter(expected.items()))
+        record = {"urls": [{"filename": name, "digests": {"sha256": checksum}}]}
+        with patch.object(package_registry, "fetch_json", return_value=record):
+            self.assertFalse(package_registry.python_exists("0.1.0", expected))
+            record["urls"][0]["digests"]["sha256"] = "different"
+            with self.assertRaisesRegex(ValueError, "differs"):
+                package_registry.python_exists("0.1.0", expected)
+
+    def test_only_404_means_version_is_missing(self):
+        for code in (404, 403, 500):
+            with patch.object(package_registry.urllib.request, "urlopen", side_effect=urllib.error.HTTPError("https://registry.test", code, "error", {}, None)):
+                if code == 404:
+                    self.assertIsNone(package_registry.fetch_json("https://registry.test"))
+                else:
+                    with self.assertRaises(urllib.error.HTTPError):
+                        package_registry.fetch_json("https://registry.test")
