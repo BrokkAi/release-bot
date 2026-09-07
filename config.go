@@ -33,6 +33,7 @@ type AgentConfig struct {
 	Environment map[string]string `json:"environment,omitempty"`
 	AuthMethod  string            `json:"auth_method,omitempty"`
 	Mode        string            `json:"mode,omitempty"`
+	Model       string            `json:"model,omitempty"`
 }
 type GitHubConfig struct {
 	Repo      string   `json:"repo,omitempty"`

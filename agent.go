@@ -87,9 +87,15 @@ func (a agentProcess) Execute(ctx context.Context, prompt string) (result Result
 	host.session = session.ID
 	host.mu.Unlock()
 	if a.config.Agent.Mode != "" {
-		if err := connection.SetMode(ctx, session, a.config.Agent.Mode); err != nil {
+		if err := connection.SetMode(ctx, &session, a.config.Agent.Mode); err != nil {
 			return result, err
 		}
+	}
+	if a.config.Agent.Model != "" {
+		if err := connection.SetModel(ctx, &session, a.config.Agent.Model); err != nil {
+			return result, err
+		}
+		a.log.Info("Using model", "model", a.config.Agent.Model)
 	}
 	a.log.Info("agent session", "id", session.ID, "transcript", transcript.Name())
 	if err := host.record(map[string]string{"prompt": prompt}); err != nil {

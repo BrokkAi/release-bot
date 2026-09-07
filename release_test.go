@@ -2,7 +2,9 @@ package releasebot
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -265,4 +267,95 @@ func TestScheduleAndLocking(t *testing.T) {
 		t.Fatal(err)
 	}
 	unlock()
+}
+
+func TestStartupReleaseDeadline(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		noRelease   bool
+		age         time.Duration
+		unchanged   bool
+		restart     bool
+		wantAttempt bool
+	}{
+		{name: "first release", noRelease: true, wantAttempt: true},
+		{name: "overdue", age: 48 * time.Hour, wantAttempt: true},
+		{name: "exact deadline", age: 24 * time.Hour, wantAttempt: true},
+		{name: "before deadline", age: 24*time.Hour - time.Second},
+		{name: "recent release", age: time.Hour},
+		{name: "unchanged overdue repository", age: 48 * time.Hour, unchanged: true},
+		{name: "restart at deadline", age: 23 * time.Hour, restart: true, wantAttempt: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t)
+			cfg := &f.engine.config
+			base := cfg.InitialRef
+			cfg.InitialRef = ""
+			cfg.GitHub.Repo = "owner/repo"
+			cfg.Burst = 0
+			// Neither a long poll interval nor a quiet period may defer startup.
+			cfg.Poll = Duration(7 * 24 * time.Hour)
+			cfg.Quiet = Duration(7 * 24 * time.Hour)
+			if tc.unchanged {
+				base = f.head
+			}
+			var releases []publishedRelease
+			published := f.now.Add(-tc.age)
+			if !tc.noRelease {
+				localGit(t, f.source, "tag", "v0.1.0", base)
+				localGit(t, f.source, "tag", "v0.2.0", base)
+				localGit(t, f.source, "push", "origin", "--tags")
+				// Deliberately oldest first: cadence must use the latest publication.
+				releases = []publishedRelease{{Tag: "v0.1.0", Published: published.Add(-48 * time.Hour)}, {Tag: "v0.2.0", Published: published}}
+			}
+			queries := 0
+			f.engine.github = github{config: *cfg, request: func(ctx context.Context, path, projection string) (string, error) {
+				if path != "repos/owner/repo/releases?per_page=100&page=1" {
+					return "", fmt.Errorf("unexpected endpoint %s", path)
+				}
+				queries++
+				data, err := json.Marshal(map[string]any{"count": len(releases), "releases": releases})
+				return string(data), err
+			}}
+			attempts := 0
+			stop := errors.New("fixture stops before publication")
+			f.engine.agent = scriptedAgent(func(ctx context.Context, prompt string) (Result, error) {
+				attempts++
+				if !strings.HasPrefix(prompt, "# Publishability") {
+					t.Fatal("immediate release bypassed preparation")
+				}
+				return Result{}, stop
+			})
+			ctx := context.Background()
+			if tc.restart {
+				if err := f.engine.cycle(ctx, false); err != nil || attempts != 0 {
+					t.Fatalf("released before deadline: attempts=%d err=%v", attempts, err)
+				}
+				f.now = f.now.Add(time.Hour)
+				restarted := *f.engine
+				f.engine = &restarted
+			}
+			err := f.engine.cycle(ctx, false)
+			if tc.wantAttempt {
+				if attempts != 1 || !errors.Is(err, stop) {
+					t.Fatalf("first check did not immediately prepare release: attempts=%d err=%v", attempts, err)
+				}
+			} else if attempts != 0 || err != nil {
+				t.Fatalf("unexpected release attempt: attempts=%d err=%v", attempts, err)
+			}
+			s := fixtureState(t, f)
+			if tc.wantAttempt && (s.Job == nil || s.Job.Target != f.head || !s.Job.Started.Equal(f.now) || s.Job.Phase != "preflight") {
+				t.Fatalf("release was not durably started in preflight: %+v", s.Job)
+			}
+			if !tc.noRelease && (s.Released != base || !s.ReleasedAt.Equal(published)) {
+				t.Fatalf("startup reset the repository's release baseline: %+v", s)
+			}
+			if tc.noRelease && (s.Released != "" || !s.ReleasedAt.IsZero()) {
+				t.Fatalf("startup invented a previous release: %+v", s)
+			}
+			if queries != 1 {
+				t.Fatalf("expected one baseline lookup, got %d", queries)
+			}
+		})
+	}
 }

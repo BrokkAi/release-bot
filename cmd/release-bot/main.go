@@ -53,6 +53,7 @@ func executeWithRun(ctx context.Context, args []string, logger *slog.Logger, run
 	file := flags.String("config", "", "optional JSON configuration for advanced settings")
 	branch := flags.String("branch", "", "branch to release (default: repository's default branch)")
 	selectedAgent := flags.String("agent", "", "ACP agent executable (default: Codex)")
+	model := flags.String("model", "", "model ID to use (default: agent's configured model)")
 	var agentArgs []string
 	flags.Func("agent-arg", "argument for the agent; repeat as needed", func(value string) error { agentArgs = append(agentArgs, value); return nil })
 	once := flags.Bool("once", mode == "once", "check/work once, then exit")
@@ -91,6 +92,17 @@ func executeWithRun(ctx context.Context, args []string, logger *slog.Logger, run
 	}
 	if *selectedAgent != "" {
 		cfg.Agent.Command = []string{*selectedAgent}
+	}
+	flags.Visit(func(f *flag.Flag) {
+		if f.Name == "model" {
+			cfg.Agent.Model = *model
+			if strings.TrimSpace(*model) == "" {
+				err = errors.New("--model requires a model ID")
+			}
+		}
+	})
+	if err != nil {
+		return err
 	}
 	cfg.Agent.Command = append(cfg.Agent.Command, agentArgs...)
 	if err := cfg.Validate(); err != nil {

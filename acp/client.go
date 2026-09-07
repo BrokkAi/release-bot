@@ -26,7 +26,8 @@ type Initialization struct {
 	} `json:"authMethods"`
 }
 type Session struct {
-	ID string `json:"sessionId"`
+	ID            string         `json:"sessionId"`
+	ConfigOptions []ConfigOption `json:"configOptions,omitempty"`
 }
 type Content struct {
 	Type string `json:"type"`
@@ -73,7 +74,10 @@ func (c *Connection) NewSession(ctx context.Context, directory string) (Session,
 	}
 	return s, err
 }
-func (c *Connection) SetMode(ctx context.Context, s Session, mode string) error {
+func (c *Connection) SetMode(ctx context.Context, s *Session, mode string) error {
+	if option := s.selector("mode"); option != nil {
+		return c.setSelection(ctx, s, *option, mode)
+	}
 	return c.Call(ctx, "session/set_mode", map[string]string{"sessionId": s.ID, "modeId": mode}, nil)
 }
 func (c *Connection) Prompt(ctx context.Context, s Session, text string) (string, error) {
@@ -83,7 +87,7 @@ func (c *Connection) Prompt(ctx context.Context, s Session, text string) (string
 	err := c.Call(ctx, "session/prompt", map[string]any{"sessionId": s.ID, "prompt": []Content{{Type: "text", Text: text}}}, &result)
 	if ctx.Err() != nil {
 		cancelCtx, stop := context.WithTimeout(context.Background(), 250*time.Millisecond)
-		_ = c.Notify(cancelCtx, "session/cancel", s)
+		_ = c.Notify(cancelCtx, "session/cancel", map[string]string{"sessionId": s.ID})
 		stop()
 	}
 	return result.StopReason, err

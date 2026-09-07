@@ -122,7 +122,9 @@ func TestDiscoveredWorkflowsAreEnforcedWithoutConfiguration(t *testing.T) {
 	result.Plan = f.plan()
 	result.Plan.GitHubWorkflows = []string{"Publish packages"}
 	f.engine.config.GitHub.Repo = "owner/repo"
-	f.engine.config.VerificationTimeout = Duration(50 * time.Millisecond)
+	f.engine.config.VerificationTimeout = Duration(5 * time.Second)
+	missingCtx, cancelMissing := context.WithCancel(ctx)
+	defer cancelMissing()
 	includePublication := false
 	f.engine.github = github{config: f.engine.config, request: func(ctx context.Context, path, query string) (string, error) {
 		switch {
@@ -135,6 +137,10 @@ func TestDiscoveredWorkflowsAreEnforcedWithoutConfiguration(t *testing.T) {
 				publish.SHA = f.head
 				publish.Workflow = 2
 				runs = append(runs, publish)
+			} else {
+				// End the pending-workflow poll only after Git verification and
+				// Actions discovery, without a timing race against subprocesses.
+				cancelMissing()
 			}
 			data, _ := json.Marshal(map[string]any{"total_count": len(runs), "workflow_runs": runs})
 			return string(data), nil
@@ -146,11 +152,10 @@ func TestDiscoveredWorkflowsAreEnforcedWithoutConfiguration(t *testing.T) {
 			return "", fmt.Errorf("unexpected endpoint %s", path)
 		}
 	}}
-	if err := f.engine.verify(ctx, f.head, result); err == nil || !strings.Contains(err.Error(), "missing required workflow Publish packages") {
+	if err := f.engine.verify(missingCtx, f.head, result); err == nil || !strings.Contains(err.Error(), "missing required workflow Publish packages") {
 		t.Fatalf("discovered requirement was ignored: %v", err)
 	}
 	includePublication = true
-	f.engine.config.VerificationTimeout = Duration(5 * time.Second)
 	if err := f.engine.verify(ctx, f.head, result); err != nil {
 		t.Fatal(err)
 	}

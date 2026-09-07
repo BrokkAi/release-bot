@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"os"
@@ -87,5 +88,50 @@ func TestHelpDoesNotNeedRepositoryAndConsoleIsReadable(t *testing.T) {
 	slog.New(newConsole(&output)).Info("Watching repository", "branch", "main")
 	if !strings.Contains(output.String(), "Watching repository · branch: main") || strings.Contains(output.String(), "msg=") {
 		t.Fatalf("unexpected console output: %s", output.String())
+	}
+}
+
+func TestModelFlagAndConfiguration(t *testing.T) {
+	source := cliRepository(t)
+	cfg, err := bot.Discover(context.Background(), source, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Agent.Model = "configured-model"
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(file, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{source}, ""},
+		{[]string{source, "--model", "chosen-model"}, "chosen-model"},
+		{[]string{"--model=chosen-model", source}, "chosen-model"},
+		{[]string{"--config", file}, "configured-model"},
+		{[]string{"--config", file, "--model", "override-model"}, "override-model"},
+	} {
+		called := false
+		err := executeWithRun(context.Background(), tc.args, slog.New(slog.NewTextHandler(io.Discard, nil)), func(ctx context.Context, cfg bot.Config, log *slog.Logger, once, force bool) error {
+			called = true
+			if cfg.Agent.Model != tc.want {
+				t.Fatalf("model = %q, want %q", cfg.Agent.Model, tc.want)
+			}
+			return nil
+		})
+		if err != nil || !called {
+			t.Fatalf("%v: %v", tc.args, err)
+		}
+	}
+	if err := executeWithRun(context.Background(), []string{source, "--model="}, slog.Default(), func(context.Context, bot.Config, *slog.Logger, bool, bool) error {
+		t.Fatal("empty model started work")
+		return nil
+	}); err == nil || !strings.Contains(err.Error(), "requires a model ID") {
+		t.Fatalf("empty model accepted: %v", err)
 	}
 }

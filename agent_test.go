@@ -37,6 +37,15 @@ func TestWirePeer(t *testing.T) {
 		return response.Result
 	}
 	dir := ""
+	modelSelected := false
+	modelOptionID := "provider-model"
+	modelCategory := "model"
+	if mode == "model-no-category" {
+		modelOptionID, modelCategory = "model", ""
+	}
+	modelOptions := func(current string) []any {
+		return []any{map[string]any{"id": modelOptionID, "name": "Model", "type": "select", "category": modelCategory, "currentValue": current, "options": []any{map[string]string{"value": "fixture-small", "name": "Small"}, map[string]string{"value": "fixture-large", "name": "Large"}}}}
+	}
 	for {
 		var m struct {
 			ID     json.RawMessage
@@ -55,8 +64,29 @@ func TestWirePeer(t *testing.T) {
 			var p struct{ Cwd string }
 			_ = json.Unmarshal(m.Params, &p)
 			dir = p.Cwd
-			result = map[string]string{"sessionId": "fixture-session"}
+			result = map[string]any{"sessionId": "fixture-session"}
+			if strings.HasPrefix(mode, "model") && mode != "model-unsupported" {
+				result = map[string]any{"sessionId": "fixture-session", "configOptions": modelOptions("fixture-small")}
+			}
+		case "session/set_config_option":
+			var p struct{ SessionID, ConfigID, Value string }
+			if json.Unmarshal(m.Params, &p) != nil || p.SessionID != "fixture-session" || p.ConfigID != modelOptionID || p.Value != "fixture-large" {
+				os.Exit(30)
+			}
+			if mode == "model-rejected" {
+				_ = write.Encode(map[string]any{"jsonrpc": "2.0", "id": m.ID, "error": map[string]any{"code": -32602, "message": "model access denied"}})
+				continue
+			}
+			modelSelected = true
+			current := p.Value
+			if mode == "model-unconfirmed" {
+				current = "fixture-small"
+			}
+			result = map[string]any{"configOptions": modelOptions(current)}
 		case "session/prompt":
+			if strings.HasPrefix(mode, "model") && !modelSelected {
+				os.Exit(31)
+			}
 			if mode == "hang" {
 				time.Sleep(time.Hour)
 				os.Exit(23)
@@ -132,6 +162,43 @@ func TestAgentProcessInteroperabilityAndTimeout(t *testing.T) {
 	}
 	if time.Since(start) > 3*time.Second {
 		t.Fatal("agent process leaked after timeout")
+	}
+}
+
+func TestAgentSelectsModelBeforeReleaseWork(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ mode, model, failure string }{
+		{"model", "fixture-large", ""},
+		{"model-no-category", "fixture-large", ""},
+		{"model", "unknown-model", "available values: fixture-small, fixture-large"},
+		{"model-unsupported", "fixture-large", "does not advertise ACP model selection"},
+		{"model-rejected", "fixture-large", "model access denied"},
+		{"model-unconfirmed", "fixture-large", "did not confirm"},
+	} {
+		t.Run(tc.mode+"/"+tc.model, func(t *testing.T) {
+			cfg := DefaultConfig()
+			cfg.Directory, cfg.StateDirectory = t.TempDir(), t.TempDir()
+			cfg.Agent = AgentConfig{Command: []string{executable, "-test.run=^TestWirePeer$"}, Environment: map[string]string{"RELEASE_BOT_WIRE_PEER": tc.mode}, Model: tc.model}
+			a := agentProcess{config: cfg, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			result, err := a.Execute(ctx, "fixture release work")
+			if tc.failure == "" {
+				if err != nil || result.Status != "released" {
+					t.Fatalf("model selection failed: %+v %v", result, err)
+				}
+			} else {
+				if err == nil || !strings.Contains(err.Error(), tc.failure) {
+					t.Fatalf("expected %q, got %v", tc.failure, err)
+				}
+				if _, err := os.Stat(filepath.Join(cfg.Directory, "wire.txt")); !os.IsNotExist(err) {
+					t.Fatal("agent received work after failed model selection")
+				}
+			}
+		})
 	}
 }
 func TestWorkspaceCannotEscapeAndCancelledPermission(t *testing.T) {

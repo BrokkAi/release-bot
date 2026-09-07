@@ -32,6 +32,7 @@ func Run(ctx context.Context, cfg Config, log *slog.Logger, once, force bool) er
 	}
 	defer unlock()
 	e := engine{config: cfg, git: checkout{cfg}, github: github{config: cfg}, agent: agentProcess{cfg, log}, log: log, now: time.Now}
+	// Check immediately, including on restart; polling only delays later checks.
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -87,12 +88,17 @@ func due(cfg Config, s *State, total, recent int, now time.Time) string {
 	if total == 0 {
 		return ""
 	}
-	age := now.Sub(s.ReleasedAt)
-	if !s.ReleasedAt.IsZero() && age < time.Duration(cfg.MinimumGap) {
-		return ""
+	if s.ReleasedAt.IsZero() {
+		return "no previous release timestamp"
 	}
-	if s.ReleasedAt.IsZero() || age >= time.Duration(cfg.Daily) {
+	age := now.Sub(s.ReleasedAt)
+	// The deadline is measured from publication, never from startup or the
+	// latest observed commit. Quiet periods apply only to early burst releases.
+	if age >= time.Duration(cfg.Daily) {
 		return "daily deadline"
+	}
+	if age < time.Duration(cfg.MinimumGap) {
+		return ""
 	}
 	if cfg.Burst > 0 && recent >= cfg.Burst && now.Sub(s.ChangedAt) >= time.Duration(cfg.Quiet) {
 		return "commit burst"

@@ -7,6 +7,7 @@ Sources consulted on 2026-09-07:
 - https://agentclientprotocol.com/protocol/v1/initialization
 - https://agentclientprotocol.com/protocol/v1/authentication
 - https://agentclientprotocol.com/protocol/v1/session-setup
+- https://agentclientprotocol.com/protocol/v1/session-config-options
 - https://agentclientprotocol.com/protocol/v1/prompt-turn
 - https://agentclientprotocol.com/protocol/v1/transports
 - https://agentclientprotocol.com/protocol/v1/cancellation

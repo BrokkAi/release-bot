@@ -15,6 +15,8 @@ release-bot
 
 No configuration file is needed. The bot detects `origin` (or the only remote) and the repository's default branch, sets up its own checkout, and starts checking for releases. It works from subdirectories too. The agent reads the repository's instructions and discovers release workflows, destinations and publishability checks. Your existing working tree and uncommitted edits are left alone; releases use the remote branch's committed history.
 
+If the repository has no release process, the agent is instructed to create it: build/package scripts, GitHub CI and release workflows, publishability checks, and `RELEASING.md`. It commits the setup, runs non-publishing validation, repairs failures, and then attempts the first release. Missing credentials or account permissions produce a specific blocked report before publication; missing workflows alone do not require manual setup.
+
 You can also point it at a repository directly:
 
 ```sh
@@ -22,6 +24,7 @@ release-bot /path/to/repo
 release-bot https://github.com/OWNER/REPO.git
 release-bot --branch main --once
 release-bot --agent your-acp-agent --agent-arg=--stdio
+release-bot --model YOUR_MODEL_ID
 release-bot status
 ```
 
@@ -35,9 +38,19 @@ From this source checkout, run `go install ./cmd/release-bot` (Go 1.27.1), or `m
 
 Advanced settings are optional: `release-bot --config /path/to/release-bot.json` uses an explicit configuration, with paths relative to that file. The [example](release-bot.example.json) shows available settings. A config file is not auto-created or implicitly loaded. Use `--json` for machine-readable logs and status. Explicit agent commands are used exactly as configured.
 
+Select a model with a flag:
+
+```sh
+release-bot --model YOUR_MODEL_ID
+```
+
+The flag works with Codex and other agents that advertise ACP model selection. The bot selects and confirms it before sending each preparation or publication prompt. Unknown model IDs report the agent's available choices; unsupported selection fails explicitly. Without the flag, the agent's default applies. An optional `agent.model` config value persists the choice; `--model` overrides it.
+
 ## Cadence and recovery
 
 By default the bot polls every five minutes and aims to release every 24 hours when there are unreleased commits. It may release earlier after 20 unreleased commits within two hours, provided two hours have elapsed since the last successful release and the branch has been quiet for 15 minutes. The daily deadline ignores the quiet period so continuous commits cannot starve releases. Set `burst` to zero to disable earlier releases.
+
+Startup checks immediately: if the last release is at least `daily` old (24 hours by default), or there has never been a release, the bot starts release preparation on that first check. It does not wait for a polling interval, a quiet period, or another day after startup. Restarting does not reset the deadline. Existing releases still require unreleased commits, and every attempt must pass publishability checks before publishing.
 
 On first startup, GitHub repositories use the most recently published release whose tag is reachable from the watched branch as their baseline. Existing release records are trusted for this initial baseline; an arbitrary local tag is not used. `initial_ref` explicitly overrides the baseline. Without an existing release or an explicit baseline, all commits are unreleased and the first check is immediately eligible. Non-GitHub repositories can set `initial_ref` to a known released commit/tag.
 
