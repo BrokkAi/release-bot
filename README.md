@@ -2,7 +2,7 @@
 
 An autonomous release daemon in Go. It monitors one repository, drives a configurable coding agent over Agent Client Protocol (ACP), and verifies publication before recording a successful release. Codex through `codex-acp` is the default agent.
 
-The Go code uses only the standard library. The `acp` package is a new implementation of the [ACP v1 specification](https://agentclientprotocol.com/protocol/v1/overview), with no third-party SDK or generated SDK code. This project has no HTTP server.
+The bot uses the shared [acp-go](https://github.com/BrokkAi/acp-go) module for ACP v1 transport, process/session lifecycle, client filesystem and terminal tools, transcripts, and model/effort selection. The library was extracted from this project and is also used by [issue-bot](https://github.com/BrokkAi/issue-bot). It uses only Go's standard library, with no third-party SDK or generated SDK code. This project has no HTTP server.
 
 ## Install
 

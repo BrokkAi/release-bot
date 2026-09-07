@@ -11,6 +11,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/BrokkAi/acp-go/runner"
 )
 
 type Duration time.Duration
@@ -28,14 +30,7 @@ func (d *Duration) UnmarshalJSON(raw []byte) error {
 }
 func (d Duration) MarshalJSON() ([]byte, error) { return json.Marshal(time.Duration(d).String()) }
 
-type AgentConfig struct {
-	Command     []string          `json:"command"`
-	Environment map[string]string `json:"environment,omitempty"`
-	AuthMethod  string            `json:"auth_method,omitempty"`
-	Mode        string            `json:"mode,omitempty"`
-	Model       string            `json:"model,omitempty"`
-	Effort      string            `json:"effort,omitempty"`
-}
+type AgentConfig = runner.AgentConfig
 type GitHubConfig struct {
 	Repo      string   `json:"repo,omitempty"`
 	Host      string   `json:"host"`

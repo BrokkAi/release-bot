@@ -1,6 +1,6 @@
 # Protocol sources and implementation
 
-The ACP client in this repository was written against the protocol documentation, using Go's standard library. It does not import, vendor, generate from, or copy an existing ACP SDK implementation. Protocol field names, method names and wire values necessarily match the specification.
+The ACP client, now maintained in [BrokkAi/acp-go](https://github.com/BrokkAi/acp-go), was written against the protocol documentation, using Go's standard library. It does not import, vendor, generate from, or copy an existing ACP SDK implementation. Protocol field names, method names and wire values necessarily match the specification.
 
 Sources consulted on 2026-09-07:
 
