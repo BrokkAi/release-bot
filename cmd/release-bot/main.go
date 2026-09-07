@@ -144,6 +144,9 @@ func executeWithRun(ctx context.Context, args []string, logger *slog.Logger, run
 			if state.Job.Failure != "" {
 				fmt.Fprintln(os.Stdout, state.Job.Failure)
 			}
+			if state.Job.SetupFailure != "" {
+				fmt.Fprintln(os.Stdout, "Agent setup:", state.Job.SetupFailure)
+			}
 			if state.Job.Interruption != "" {
 				fmt.Fprintln(os.Stdout, "Interrupted:", state.Job.Interruption)
 			}
@@ -167,6 +170,9 @@ func executeWithRun(ctx context.Context, args []string, logger *slog.Logger, run
 	}
 	logger.Info("Watching repository", "repository", cfg.Remote, "branch", cfg.Branch)
 	logger.Info("Using agent", "command", strings.Join(cfg.Agent.Command, " "))
+	if cfg.Agent.Model != "" || cfg.Agent.Effort != "" {
+		logger.Info("Requested agent settings", "model", cfg.Agent.Model, "effort", cfg.Agent.Effort)
+	}
 	logger.Info("Using managed workspace", "checkout", cfg.Directory, "state", cfg.StateDirectory)
 	return run(ctx, cfg, logger, *once, *force)
 }

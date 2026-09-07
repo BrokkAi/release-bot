@@ -64,6 +64,35 @@ func (g checkout) contains(ctx context.Context, descendant, ancestor string) err
 	}
 	return nil
 }
+
+// releaseHead includes committed work left in the bot's checkout. Counting only
+// origin would hide those commits forever when the remote is already released.
+// Preparation owns pushing them after inspecting the repository's push triggers.
+func (g checkout) releaseHead(ctx context.Context) (string, error) {
+	branch, err := g.git(ctx, "symbolic-ref", "--short", "HEAD")
+	if err != nil {
+		return "", err
+	}
+	if branch != g.config.Branch {
+		return "", fmt.Errorf("checkout must be on %s, currently %s", g.config.Branch, branch)
+	}
+	head, err := g.resolve(ctx, "HEAD")
+	if err != nil {
+		return "", err
+	}
+	remote, err := g.resolve(ctx, g.branchRef())
+	if err != nil {
+		return "", err
+	}
+	if g.contains(ctx, remote, head) == nil {
+		return remote, nil
+	}
+	if g.contains(ctx, head, remote) == nil {
+		return head, nil
+	}
+	return "", errors.New("checkout and remote have divergent commits; reconcile them without discarding local work before a new release")
+}
+
 func (g checkout) advance(ctx context.Context) error {
 	status, err := g.git(ctx, "status", "--porcelain")
 	if err != nil {
@@ -72,21 +101,11 @@ func (g checkout) advance(ctx context.Context) error {
 	if status != "" {
 		return errors.New("checkout has unfinished edits; refusing to overwrite them")
 	}
-	branch, err := g.git(ctx, "symbolic-ref", "--short", "HEAD")
+	head, err := g.releaseHead(ctx)
 	if err != nil {
 		return err
 	}
-	if branch != g.config.Branch {
-		return fmt.Errorf("checkout must be on %s, currently %s", g.config.Branch, branch)
-	}
-	head, err := g.resolve(ctx, "HEAD")
-	if err != nil {
-		return err
-	}
-	if err := g.contains(ctx, g.branchRef(), head); err != nil {
-		return errors.New("checkout has unpushed or divergent commits; resolve them before a new release")
-	}
-	_, err = g.git(ctx, "merge", "--ff-only", g.branchRef())
+	_, err = g.git(ctx, "merge", "--ff-only", head)
 	return err
 }
 func (g checkout) changes(ctx context.Context, base, head string, since time.Time) (int, int, error) {

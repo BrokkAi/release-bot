@@ -24,6 +24,7 @@ type Job struct {
 	Tries            int              `json:"tries"`
 	RetryAt          time.Time        `json:"retry_at"`
 	Failure          string           `json:"failure,omitempty"`
+	SetupFailure     string           `json:"setup_failure,omitempty"`
 	Interruption     string           `json:"interruption,omitempty"`
 	Candidate        *Result          `json:"candidate,omitempty"`
 	Phase            string           `json:"phase"`

@@ -25,7 +25,20 @@ type agentProcess struct {
 	log    *slog.Logger
 }
 
+// Setup failures happen before any release prompt reaches the agent. Retrying
+// unchanged startup settings cannot repair them and must not spend release tries.
+type agentSetupError struct{ err error }
+
+func (e *agentSetupError) Error() string { return "agent setup failed before prompt: " + e.err.Error() }
+func (e *agentSetupError) Unwrap() error { return e.err }
+
 func (a agentProcess) Execute(ctx context.Context, prompt string) (result Result, runErr error) {
+	promptStarted := false
+	defer func() {
+		if runErr != nil && !promptStarted {
+			runErr = &agentSetupError{runErr}
+		}
+	}()
 	dir := filepath.Join(a.config.StateDirectory, "sessions")
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return result, err
@@ -129,6 +142,7 @@ func (a agentProcess) Execute(ctx context.Context, prompt string) (result Result
 		return result, err
 	}
 	phase = "session/prompt"
+	promptStarted = true
 	reason, err := connection.Prompt(ctx, session, prompt)
 	if err != nil {
 		return result, err

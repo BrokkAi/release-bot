@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/BrokkAi/release-bot/internal/osrun"
@@ -21,6 +22,8 @@ type engine struct {
 	now      func() time.Time
 	starting bool
 }
+
+var errAttemptsExhausted = errors.New("release retry budget exhausted; fix the reported failure and run release-bot retry")
 
 // Run watches one repository. Once executes one poll/recovery attempt; force
 // ignores cadence for a new release but never publishes without new commits.
@@ -46,7 +49,8 @@ func Run(ctx context.Context, cfg Config, log *slog.Logger, once, force bool) er
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		if once {
+		var setup *agentSetupError
+		if once || errors.As(err, &setup) || errors.Is(err, errAttemptsExhausted) {
 			return err
 		}
 		if err != nil {
@@ -130,7 +134,7 @@ func (e *engine) cycle(ctx context.Context, force bool) error {
 		return e.resume(ctx, s)
 	}
 	now := e.now().UTC()
-	head, err := e.git.resolve(ctx, e.git.branchRef())
+	head, err := e.git.releaseHead(ctx)
 	if err != nil {
 		return err
 	}
@@ -165,6 +169,17 @@ func (e *engine) cycle(ctx context.Context, force bool) error {
 }
 func (e *engine) resume(ctx context.Context, s *State) error {
 	j := s.Job
+	if e.starting && legacySelectionFailure(j.Failure) {
+		// Older versions counted selection errors as release attempts. Refund
+		// only the last known setup failure, preserving earlier real failures.
+		j.Tries = max(0, j.Tries-1)
+		j.SetupFailure, j.Failure = j.Failure, ""
+		j.RetryAt = time.Time{}
+		if err := writeState(e.config, s); err != nil {
+			return err
+		}
+		e.log.Info("Recovered attempt consumed by an invalid agent setting", "model", e.config.Agent.Model, "effort", e.config.Agent.Effort)
+	}
 	if e.now().Before(j.RetryAt) && !e.starting {
 		e.log.Info("retry scheduled", "at", j.RetryAt, "previous_error", j.Failure)
 		return nil
@@ -198,14 +213,15 @@ func (e *engine) resume(ctx context.Context, s *State) error {
 		}
 	}
 	if j.Tries >= e.config.Attempts {
-		j.RetryAt = e.now().Add(time.Duration(e.config.RetryDelay))
+		j.RetryAt = time.Time{}
 		if err := writeState(e.config, s); err != nil {
 			return err
 		}
-		return errors.New("agent retry budget exhausted; inspect state/sessions and use retry to resume this release")
+		return fmt.Errorf("%w; last failure: %s", errAttemptsExhausted, j.Failure)
 	}
 	j.Tries++
 	j.Interruption = ""
+	j.SetupFailure = ""
 	j.RetryAt = e.now().Add(time.Duration(e.config.RetryDelay))
 	// The target and consumed attempt are durable before any agent side effects.
 	if err := writeState(e.config, s); err != nil {
@@ -228,6 +244,16 @@ func (e *engine) resume(ctx context.Context, s *State) error {
 	if errors.Is(ctx.Err(), context.Canceled) {
 		return e.interrupted(ctx, s, true)
 	}
+	var setup *agentSetupError
+	if errors.As(err, &setup) {
+		j.Tries--
+		j.SetupFailure = err.Error()
+		j.RetryAt = time.Time{}
+		if saveErr := writeState(e.config, s); saveErr != nil {
+			return saveErr
+		}
+		return err
+	}
 	detail := err.Error()
 	if len(detail) > 64<<10 {
 		detail = detail[len(detail)-(64<<10):]
@@ -237,7 +263,23 @@ func (e *engine) resume(ctx context.Context, s *State) error {
 	if saveErr := writeState(e.config, s); saveErr != nil {
 		return saveErr
 	}
-	return fmt.Errorf("release attempt %d/%d: %w", j.Tries, e.config.Attempts, err)
+	attemptErr := fmt.Errorf("release attempt %d/%d: %w", j.Tries, e.config.Attempts, err)
+	if j.Tries >= e.config.Attempts {
+		return errors.Join(errAttemptsExhausted, attemptErr)
+	}
+	return attemptErr
+}
+
+// Compatibility with the precise selector errors emitted before setup failures
+// had their own persisted field. Never infer a refund from arbitrary tool errors.
+func legacySelectionFailure(failure string) bool {
+	failure = strings.TrimPrefix(failure, "preflight agent: ")
+	for _, name := range []string{"Model", "Reasoning effort"} {
+		if strings.HasPrefix(failure, "unknown "+name+" \"") && strings.Contains(failure, "\"; available values: ") {
+			return true
+		}
+	}
+	return false
 }
 
 func (e *engine) interrupted(ctx context.Context, s *State, refund bool) error {
