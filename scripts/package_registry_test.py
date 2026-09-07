@@ -63,8 +63,8 @@ class PackageRegistry(unittest.TestCase):
             self.assertTrue(calls[4][2].endswith("package-0.tgz"))
             self.assertEqual(calls[5][:2], ["uv", "publish"])
             self.assertFalse(any(value.endswith(".gitignore") for value in calls[5]))
-            self.assertEqual(wait.call_count, 6)
-            self.assertEqual(events, ["publish"] * 4 + ["verify"] * 4 + ["publish", "verify", "publish", "verify"])
+            self.assertEqual(wait.call_count, 1)
+            self.assertEqual(events, ["publish"] * 6 + ["verify"])
 
     def test_selected_registry_never_contacts_or_publishes_the_other(self):
         for registry, expected_calls in (("npm", 5), ("pypi", 1)):
@@ -136,3 +136,19 @@ class PackageRegistry(unittest.TestCase):
             self.assertEqual(sum(call.args[0] for call in sleep.call_args_list), 600)
             with self.assertRaisesRegex(ValueError, "conflict"):
                 package_registry.wait_visible(Mock(side_effect=ValueError("conflict")))
+
+    def test_npm_uploads_do_not_wait_for_public_indexes(self):
+        with patch.object(package_registry, "npm_exists", return_value=False) as exists, \
+                patch.object(package_registry, "wait_visible") as wait, \
+                patch.object(package_registry.subprocess, "run") as command:
+            package_registry.run("publish", self.root, "npm")
+            self.assertEqual(command.call_count, 5)
+            self.assertEqual(exists.call_count, 5)
+            wait.assert_not_called()
+
+    def test_npm_upload_error_stops_before_root(self):
+        with patch.object(package_registry, "npm_exists", return_value=False), \
+                patch.object(package_registry.subprocess, "run", side_effect=package_registry.subprocess.CalledProcessError(1, "npm")) as command:
+            with self.assertRaises(package_registry.subprocess.CalledProcessError):
+                package_registry.run("publish", self.root, "npm")
+            self.assertEqual(command.call_count, 1)

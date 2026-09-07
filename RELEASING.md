@@ -20,6 +20,27 @@ builds all installer packages, and smoke-tests actual local npm and uv installs.
 Actionlint checks workflow syntax and shell commands. Official actions are pinned
 to commits; Dependabot proposes updates weekly.
 
+## Automatic tagged releases
+
+Push a new version tag at the intended master commit:
+
+```sh
+git tag v0.3.1
+git push origin v0.3.1
+```
+
+`publish-packages.yml` is the tag-triggered entry point. It calls `release.yml`
+to run all CI, validate publisher access, build and publish the native assets.
+Only after that succeeds does it build/test and upload all five npm packages
+from the exact tag. Follow **Publish packages** for the complete pipeline.
+The npm trusted-publisher workflow identity stays `publish-packages.yml`.
+PyPI remains opt-in through manual registry selection until its publisher is configured.
+
+Successful npm uploads finish without waiting for public version indexes or
+running immediate public-install checks. Local installer tests, native checksums,
+package hashes, existing-version conflict checks and upload errors remain gates.
+The explicit registry `verify` command can check public bytes later.
+
 ## Prepare without publishing
 
 Commit and push preparation changes to `master`. Choose an unused version such as
@@ -57,7 +78,7 @@ gh workflow run release.yml --repo BrokkAi/release-bot --ref master -f tag=v0.1.
 Keep `master` at the validated commit between preflight and this dispatch. If it
 changed, prepare the new commit and version again. The workflow independently
 repeats every check; an existing draft for another commit prevents publication.
-Only dispatch from `master` is supported, so the code, workflow, and run SHA agree.
+Manual native dispatches use `master`; automatic releases use their exact tag. Both keep the code, workflow and artifact commit aligned.
 
 After preflight, all six files are uploaded to the private draft, downloaded and
 checked byte-for-byte. Only a complete set can become public. GitHub creates the
@@ -65,9 +86,10 @@ tag at the exact prepared commit when publishing. The script then verifies the
 public release, remote tag, and all downloads again. Stable releases become
 latest; prereleases do not. Public artifacts are never overwritten on retry.
 
-No workflow publishes automatically on a code push. The release bot decides when
-new commits need a release, prepares a plan, runs the preflight dispatch, and uses
-`publish=true` only in its publication phase. Include `ci.yml` and `release.yml`
+Ordinary branch pushes do not publish. Version tag pushes automatically run the
+complete pipeline. The release bot can retain its manual preflight and
+`publish=true` flow; a successful manual native publication now automatically
+dispatches npm publication at the resulting tag. Monitor that package run too. Include `ci.yml` and `release.yml`
 among the required workflows in that plan. Their Actions runs must pass for the
 exact release commit.
 
@@ -128,8 +150,9 @@ PyPI out of a release's destination plan until its publisher is configured.
   needs a token, the workflow accepts an authorized granular token in the
   environment's `NPM_TOKEN` secret. Remove it after OIDC is configured.
 
-Publish the native GitHub release first, then dispatch the package workflow
-**from that exact tag**, which must include these installer changes:
+Normal version tags publish native assets and npm automatically. For package-only
+validation or recovery after a partial release, dispatch the package workflow
+**from that exact existing tag**:
 
 ```sh
 gh workflow run publish-packages.yml --repo BrokkAi/release-bot --ref v0.1.0 -f tag=v0.1.0
@@ -147,7 +170,7 @@ gh workflow run publish-packages.yml --repo BrokkAi/release-bot --ref v0.1.0 -f 
 ```
 
 Select `-f registry=npm` or `-f registry=pypi` to check, publish and verify only
-that registry; the default `all` requires both. Packages for both installers are
+that registry; the default `npm` works with the configured publisher. `all` requires both. Packages for both installers are
 still built and tested. The CLI accepts the same selection with `--registry`:
 
 ```sh
@@ -155,10 +178,10 @@ gh workflow run publish-packages.yml --repo BrokkAi/release-bot --ref v0.3.0 -f 
 python3 scripts/package_registry.py verify dist/packages --registry npm
 ```
 
-Publication checks every existing package for conflicts before uploading, publishes
-and verifies all four npm platform packages before the root package, then publishes
+Publication checks every existing package for conflicts before uploading, submits
+all four npm platform packages before the root package, then optionally publishes
 the Python distributions with uv's [trusted publishing](https://docs.astral.sh/uv/guides/package/).
-The workflow finishes with public npm and uv install smoke tests. Retries accept
+Immediate public npm install checks are omitted. Explicit PyPI publication still checks its public uv install. Retries accept
 existing files only when their hashes match the staged bytes; partial Python
 uploads resume through `uv publish --check-url`. Preserve validated artifacts if
 toolchain changes make a later rebuild differ. Never overwrite conflicting versions.
@@ -170,7 +193,7 @@ workflows and verify registry publication separately; the existing
 GitHub assets must be public before the Python launcher can download them, so
 registry failure can leave a partial release. Reconcile it by rerunning the package
 workflow for the same tag and registry selection; do not mark the overall release
-successful until every selected destination passes verification. Installer packaging can be validated locally before
+successful until every selected upload succeeds. Public npm index propagation is not a release gate; use the explicit verify command later when needed. Installer packaging can be validated locally before
 publishing GitHub assets:
 
 ```sh

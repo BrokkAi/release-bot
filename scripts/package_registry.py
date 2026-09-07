@@ -100,24 +100,20 @@ def run(command, directory, registry="all"):
             raise ValueError("publication is incomplete: a selected package or distribution is missing")
         print(f"All selected packages ({registry}) match the staged bytes")
         return
-    # Submit independent platform packages together so their processing queues
-    # overlap. The root launcher must wait until every dependency is verified.
-    groups = ([p for p in packages if p["name"] != package_installers.NPM_ROOT],
-              [p for p in packages if p["name"] == package_installers.NPM_ROOT])
-    for group in groups:
-        for package in group:
-            if not existing[package["name"]]:
-                subprocess.run(["npm", "publish", str((directory / "npm" / package["filename"]).resolve()),
-                                "--access", "public", "--registry", "https://registry.npmjs.org",
-                                "--tag", "next" if "-" in npm_version else "latest"], check=True)
-        for package in group:
-            wait_visible(lambda: npm_exists(package))
+    # Submit platform packages before the root launcher. A successful upload
+    # can take time to appear in public indexes; visibility is checked only by
+    # the explicit verify command, not used as a release gate.
+    for package in packages:
+        if not existing[package["name"]]:
+            subprocess.run(["npm", "publish", str((directory / "npm" / package["filename"]).resolve()),
+                            "--access", "public", "--registry", "https://registry.npmjs.org",
+                            "--tag", "next" if "-" in npm_version else "latest"], check=True)
     if not existing_python:
         subprocess.run(["uv", "publish", "--trusted-publishing", "always", "--check-url", "https://pypi.org/simple/",
                         *[str((directory / "python" / name).resolve()) for name in expected_python]], check=True)
     if expected_python:
         wait_visible(lambda: python_exists(python_version, expected_python))
-    print(f"Published and verified selected packages ({registry})")
+    print(f"Submitted selected packages ({registry}); npm visibility may lag behind accepted uploads")
 
 
 def main():

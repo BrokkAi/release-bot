@@ -12,6 +12,7 @@ import release
 
 PREFLIGHT_STEP = "Check every artifact and the actual publishing credential"
 PUBLISHER_JOB = "Validate publisher and optionally publish"
+DISPATCHER_JOB = "Start npm publication after manual native publication"
 RELEASE_WORKFLOW = ".github/workflows/release.yml"
 
 
@@ -114,6 +115,9 @@ def authorization():
         raise ValueError("RELEASE_TAG exists without a recoverable GitHub release")
     run = selected_preflight_run(github, sha, tag)
     jobs = github.api(f"{github.base}/actions/runs/{run['id']}/jobs?per_page=100").get("jobs", [])
+    # A non-publishing preflight deliberately skips the npm dispatch job.
+    # Every validation job still has to complete successfully.
+    jobs = [job for job in jobs if not (job.get("name") == DISPATCHER_JOB and job.get("conclusion") == "skipped")]
     if not jobs or any(job.get("status") != "completed" or job.get("conclusion") != "success" for job in jobs):
         raise ValueError("the exact preflight run has missing, incomplete, or failed jobs")
     publisher = [job for job in jobs if job.get("name") == PUBLISHER_JOB]

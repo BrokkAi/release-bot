@@ -68,6 +68,16 @@ class ReleaseChecks(unittest.TestCase):
         self.assertEqual(github.api.call_count, 2)
         self.assertTrue(all(len(call.args) == 1 for call in github.api.call_args_list))
 
+    def test_preflight_skips_only_the_publication_dispatcher(self):
+        github, run, job = self.authorization_fixture()
+        skipped = {"name": release_check.DISPATCHER_JOB, "status": "completed", "conclusion": "skipped"}
+        github.api.side_effect = [{"workflow_runs": [run]}, {"jobs": [job, skipped]}]
+        release_check.authorization()
+        for other in (dict(skipped, name="Tests"), dict(skipped, conclusion="failure")):
+            github.api.side_effect = [{"workflow_runs": [run]}, {"jobs": [job, other]}]
+            with self.assertRaises(ValueError):
+                release_check.authorization()
+
     def test_published_release_uses_verification_without_preflight_or_writes(self):
         published = {"id": 1, "tag_name": "v0.1.0", "draft": False, "published_at": "2026-09-07"}
         github, _, _ = self.authorization_fixture([published], "a" * 40)

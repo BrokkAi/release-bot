@@ -1,7 +1,9 @@
 name: Publish packages
-run-name: Packages ${{ inputs.tag }} (${{ inputs.registry }}, publish=${{ inputs.publish }})
+run-name: Release ${{ inputs.tag || github.ref_name }} (publish=${{ github.event_name == 'push' || inputs.publish }})
 
 on:
+  push:
+    tags: ['v*']
   workflow_dispatch:
     inputs:
       tag:
@@ -15,7 +17,7 @@ on:
       registry:
         description: Registries to publish (PyPI requires its own trusted publisher)
         type: choice
-        default: all
+        default: npm
         options: [all, npm, pypi]
 
 permissions:
@@ -26,7 +28,18 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  native:
+    if: github.event_name == 'push'
+    permissions:
+      contents: write
+      actions: write
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ github.ref_name }}
+      publish: true
   packages:
+    needs: native
+    if: ${{ !cancelled() && (needs.native.result == 'success' || github.event_name == 'workflow_dispatch') }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     environment: packages-publish
@@ -37,7 +50,7 @@ jobs:
       - name: Require the exact release tag
         env:
           RELEASE_REF: ${{ github.ref }}
-          RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
         run: test "$RELEASE_REF" = "refs/tags/$RELEASE_TAG"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -53,13 +66,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
         run: |
           test "$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)" = false
           gh release download "$RELEASE_TAG" --dir dist/native
       - name: Test launchers and build packages from verified assets
         env:
-          RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
         run: |
           python3 -m unittest discover -s scripts -p '*_test.py' -v
           node --test --test-isolation=none npm/brb.test.cjs
@@ -67,7 +80,7 @@ jobs:
           python3 scripts/smoke_installers.py --tag "$RELEASE_TAG" --assets dist/native --packages dist/packages
       - name: Check version availability and existing package integrity
         env:
-          PACKAGE_REGISTRY: ${{ inputs.registry }}
+          PACKAGE_REGISTRY: ${{ inputs.registry || 'npm' }}
         run: python3 scripts/package_registry.py check dist/packages --registry "$PACKAGE_REGISTRY"
       - name: Verify the Python launcher can download the published binary
         env:
@@ -76,24 +89,19 @@ jobs:
       - name: Save validated packages for review and bootstrap publication
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
-          name: packages-${{ inputs.tag }}
+          name: packages-${{ inputs.tag || github.ref_name }}
           path: dist/packages/
           if-no-files-found: error
-      - name: Publish and verify every package
-        if: inputs.publish
+      - name: Submit validated packages
+        if: github.event_name == 'push' || inputs.publish
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          PACKAGE_REGISTRY: ${{ inputs.registry }}
+          PACKAGE_REGISTRY: ${{ inputs.registry || 'npm' }}
         run: python3 scripts/package_registry.py publish dist/packages --registry "$PACKAGE_REGISTRY"
-      - name: Verify public npm install
-        if: inputs.publish && inputs.registry != 'pypi'
-        env:
-          RELEASE_TAG: ${{ inputs.tag }}
-        run: npm exec --yes --package="@brokkai/release-bot@${RELEASE_TAG#v}" -- brb --help
       - name: Verify public PyPI install
-        if: inputs.publish && inputs.registry != 'npm'
+        if: inputs.publish && (inputs.registry == 'all' || inputs.registry == 'pypi')
         env:
-          RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
           BROKK_RELEASE_BOT_CACHE_DIR: ${{ runner.temp }}/brb-public-cache
         run: |
           python_version=$(PYTHONPATH=scripts python3 -c 'import os, package_installers; print(package_installers.versions(os.environ["RELEASE_TAG"])[1])')

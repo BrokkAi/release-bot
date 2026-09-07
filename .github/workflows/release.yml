@@ -2,6 +2,14 @@ name: Release
 run-name: Release ${{ inputs.tag }} (publish=${{ inputs.publish }})
 
 on:
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
+      publish:
+        type: boolean
+        default: false
   workflow_dispatch:
     inputs:
       tag:
@@ -28,10 +36,13 @@ jobs:
       - name: Require the release branch
         env:
           RELEASE_REF: ${{ github.ref }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_EVENT: ${{ github.event_name }}
         run: |
-          if [[ "$RELEASE_REF" != refs/heads/master ]]; then
-            echo 'Run releases from master so the workflow and its artifacts use the same tested commit.' >&2
-            exit 1
+          if [[ "$RELEASE_EVENT" = push ]]; then
+            test "$RELEASE_REF" = "refs/tags/$RELEASE_TAG"
+          else
+            test "$RELEASE_REF" = refs/heads/master
           fi
 
   checks:
@@ -73,3 +84,20 @@ jobs:
       - name: Explain preflight result
         if: ${{ !inputs.publish }}
         run: echo 'All checks passed. The release remains an unpublished draft. Run again with publish=true to publish.' >> "$GITHUB_STEP_SUMMARY"
+
+  packages:
+    name: Start npm publication after manual native publication
+    needs: release
+    if: github.event_name == 'workflow_dispatch' && inputs.publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - name: Dispatch the package workflow at the published tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: gh workflow run publish-packages.yml --ref "$RELEASE_TAG" -f tag="$RELEASE_TAG" -F publish=true -f registry=npm

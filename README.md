@@ -212,3 +212,16 @@ The ACP implementation includes newline JSON-RPC framing, bidirectional requests
 Tests use in-memory protocol peers, real subprocess pipes, temporary Git remotes and simulated registry checks. They cover permission failures, incomplete plans, partial publication, recovery, concurrent commits, scheduling, locking, path confinement and cancellation. They do not exercise real Codex credentials or publish to live registries.
 
 Licensed under [Apache License 2.0](LICENSE). The license text was obtained unmodified from the Apache Software Foundation's license endpoint.
+
+## Automatic releases of this project
+
+Pushing a new version tag starts the complete **Publish packages** workflow:
+CI and native GitHub publication, followed automatically by all five npm packages
+at the same tag and commit. No separate package dispatch is needed. Branch
+pushes do not publish. PyPI remains an explicit manual option until configured.
+
+Native checksums, local installer tests, package hashes and upload errors remain
+release gates. Successful npm uploads do not wait for the public version index or
+run immediate public-install checks. Manual package dispatch and the explicit
+registry verification command remain available for recovery and later checks.
+See [RELEASING.md](RELEASING.md).
