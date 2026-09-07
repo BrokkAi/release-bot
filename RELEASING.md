@@ -26,8 +26,8 @@ gh run watch RUN_ID --repo BrokkAi/release-bot --exit-status
 
 Confirm the run's `headSha` is the intended prepared commit. The workflow reruns
 all CI, builds all four archives with the Go version in `go.mod`, validates their
-contents and checksums, and retains a `release-assets` workflow artifact for seven
-days. Its publishing job uses the automatic `GITHUB_TOKEN` with `contents: write`.
+contents and checksums without uploading them. Its publishing job uses the
+automatic `GITHUB_TOKEN` with `contents: write`.
 It creates or updates an **unpublished draft** using that actual token to verify
 write access. No personal access token or package-registry secret is required.
 Missing rights fail here; no release assets are uploaded to the draft in this mode.
@@ -61,6 +61,25 @@ new commits need a release, prepares a plan, runs the preflight dispatch, and us
 `publish=true` only in its publication phase. Include `ci.yml` and `release.yml`
 among the required workflows in that plan. Their Actions runs must pass for the
 exact release commit.
+
+The release bot's reproducible destination checks read `RELEASE_COMMIT`,
+`RELEASE_TAG`, and `RELEASE_TARGET` from the environment. Run them only after the
+successful preflight dispatch above:
+
+```sh
+python3 scripts/release_check.py build
+python3 scripts/release_check.py authorization
+python3 scripts/release_check.py version
+```
+
+The authorization check finds the successful `Release` preflight run for the
+exact commit and tag, requires every job to have passed, verifies the publisher
+step used that run's `github.token`, and confirms the resulting private draft is
+targeted at the same commit. It does not treat this machine's `gh` login as the
+publisher. The version check rejects conflicting tags/releases and permits an
+exact matching draft or a complete immutable published release during recovery.
+After publication, `python3 scripts/release_check.py published` rebuilds the
+deterministic assets and compares every downloaded release asset byte-for-byte.
 
 ## Recovery and local tooling
 
