@@ -94,7 +94,7 @@ func TestLegacyModelTypoAtBudgetLimitUsesCurrentCommand(t *testing.T) {
 func TestSetupFailureDuringPublicationPreservesCheckpointsAndEarlierFailures(t *testing.T) {
 	f := newFixture(t)
 	preparations := 0
-	setupErr := &agentSetupError{errors.New("unsupported effort")}
+	setupErr := &agentSetupError{Err: errors.New("unsupported effort")}
 	f.engine.agent = scriptedAgent(func(ctx context.Context, prompt string) (Result, error) {
 		if strings.HasPrefix(prompt, "# Publishability") {
 			preparations++
