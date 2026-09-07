@@ -1,0 +1,25 @@
+{
+  "remote": "git@github.com:YOUR_ORG/YOUR_REPO.git",
+  "branch": "master",
+  "directory": "var/checkout",
+  "state_directory": "var/state",
+  "instruction_files": ["AGENTS.md", "RELEASING.md", "RELEASE.md", "CONTRIBUTING.md"],
+  "agent": {
+    "command": ["codex-acp"]
+  },
+  "github": {
+    "host": "github.com",
+    "workflows": ["ci.yml", "release.yml"],
+    "assets": []
+  },
+  "poll": "5m",
+  "daily": "24h",
+  "minimum_gap": "2h",
+  "quiet": "15m",
+  "burst_window": "2h",
+  "burst": 20,
+  "timeout": "2h",
+  "verification_timeout": "30m",
+  "retry_delay": "15m",
+  "attempts": 3
+}
