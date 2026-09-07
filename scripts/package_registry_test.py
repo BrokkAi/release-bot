@@ -29,6 +29,7 @@ class PackageRegistry(unittest.TestCase):
             self.packages.append({"name": name, "version": "0.1.0", "filename": filename,
                                   "sha256": release.digest(data), "integrity": "sha512-fixture"})
         (self.root / "npm/manifest.json").write_text(json.dumps({"tag": "v0.1.0", "commit": "a" * 40, "packages": self.packages}))
+        (self.root / "python/.gitignore").write_text("*")
         for name in ("brokk_release_bot-0.1.0-py3-none-any.whl", "brokk_release_bot-0.1.0.tar.gz"):
             (self.root / "python" / name).write_bytes(b"python fixture")
 
