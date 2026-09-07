@@ -19,15 +19,18 @@ type Result struct {
 	Plan   *PublicationPlan `json:"plan,omitempty"`
 }
 type Job struct {
-	Target       string           `json:"target"`
-	Started      time.Time        `json:"started"`
-	Tries        int              `json:"tries"`
-	RetryAt      time.Time        `json:"retry_at"`
-	Failure      string           `json:"failure,omitempty"`
-	Interruption string           `json:"interruption,omitempty"`
-	Candidate    *Result          `json:"candidate,omitempty"`
-	Phase        string           `json:"phase"`
-	Plan         *PublicationPlan `json:"plan,omitempty"`
+	Target           string           `json:"target"`
+	Started          time.Time        `json:"started"`
+	Tries            int              `json:"tries"`
+	RetryAt          time.Time        `json:"retry_at"`
+	Failure          string           `json:"failure,omitempty"`
+	Interruption     string           `json:"interruption,omitempty"`
+	Candidate        *Result          `json:"candidate,omitempty"`
+	Phase            string           `json:"phase"`
+	Plan             *PublicationPlan `json:"plan,omitempty"`
+	BuildChecks      map[string]bool  `json:"build_checks,omitempty"`
+	ValidatedAt      time.Time        `json:"validated_at,omitempty"`
+	NeedsPreparation bool             `json:"needs_preparation,omitempty"`
 }
 type State struct {
 	Format     int       `json:"format"`

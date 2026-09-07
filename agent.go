@@ -117,6 +117,13 @@ func (a agentProcess) Execute(ctx context.Context, prompt string) (result Result
 		}
 		a.log.Info("Using model", "model", a.config.Agent.Model)
 	}
+	if a.config.Agent.Effort != "" {
+		phase = "select effort"
+		if err := connection.SetEffort(ctx, &session, a.config.Agent.Effort); err != nil {
+			return result, err
+		}
+		a.log.Info("Using reasoning effort", "effort", a.config.Agent.Effort)
+	}
 	a.log.Info("agent session", "id", session.ID, "transcript", transcript.Name())
 	if err := host.record(map[string]string{"prompt": prompt}); err != nil {
 		return result, err

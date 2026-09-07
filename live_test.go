@@ -19,6 +19,7 @@ func TestLiveACP(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Directory, cfg.StateDirectory = t.TempDir(), t.TempDir()
 	cfg.Agent.Model = os.Getenv("RELEASE_BOT_LIVE_MODEL")
+	cfg.Agent.Effort = os.Getenv("RELEASE_BOT_LIVE_EFFORT")
 	if err := ResolveAgent(&cfg, true); err != nil {
 		t.Fatal(err)
 	}

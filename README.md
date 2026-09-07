@@ -25,6 +25,7 @@ release-bot https://github.com/OWNER/REPO.git
 release-bot --branch main --once
 release-bot --agent your-acp-agent --agent-arg=--stdio
 release-bot --model YOUR_MODEL_ID
+release-bot --model YOUR_MODEL_ID --effort low
 release-bot status
 ```
 
@@ -46,6 +47,8 @@ release-bot --model YOUR_MODEL_ID
 
 The flag works with Codex and other agents that advertise ACP model selection. The bot selects and confirms it before sending each preparation or publication prompt. Unknown model IDs report the agent's available choices; unsupported selection fails explicitly. Without the flag, the agent's default applies. An optional `agent.model` config value persists the choice; `--model` overrides it.
 
+Set reasoning effort with `--effort low` (or another value advertised by your agent, such as `medium` or `high`). It can be used with or without `--model`. The bot selects effort after the model and confirms it before every preparation or publication prompt. Unsupported effort values report the available choices; agents without effort selection fail explicitly. Omitting the option keeps the agent's configured default. Set `"effort": "low"` inside the config's `agent` object to persist it; `--effort` overrides that value.
+
 ## Cadence and recovery
 
 By default the bot polls every five minutes and aims to release every 24 hours when there are unreleased commits. It may release earlier after 20 unreleased commits within two hours, provided two hours have elapsed since the last successful release and the branch has been quiet for 15 minutes. The daily deadline ignores the quiet period so continuous commits cannot starve releases. Set `burst` to zero to disable earlier releases.
@@ -54,7 +57,7 @@ Startup checks immediately: if the last release is at least `daily` old (24 hour
 
 On first startup, GitHub repositories use the most recently published release whose tag is reachable from the watched branch as their baseline. Existing release records are trusted for this initial baseline; an arbitrary local tag is not used. `initial_ref` explicitly overrides the baseline. Without an existing release or an explicit baseline, all commits are unreleased and the first check is immediately eligible. Non-GitHub repositories can set `initial_ref` to a known released commit/tag.
 
-A release job records its target before starting the agent. Failed jobs preserve local work and failure evidence, then retry after 15 minutes. Each attempt has a two-hour budget shared by preparation, publishability validation, and publication. After three attempts, the job remains pending for operator inspection and `retry`. A stored publication receipt is rechecked before asking the agent to act again, including after the attempt budget is exhausted. This can reconcile a release whose asynchronous checks eventually pass.
+A release job records its target before starting the agent. Failed jobs preserve local work and failure evidence, then retry after 15 minutes. Each attempt has a two-hour budget shared by preparation, publishability validation, and publication. After three attempts, the job remains pending for operator inspection and `retry`. A stored publication receipt is rechecked before asking the agent to act again, including after the attempt budget is exhausted. If the publisher lost its connection before returning a receipt, the daemon first tries to verify publication directly from the saved publication plan. This can reconcile a release whose asynchronous checks eventually pass.
 
 Recovery instructions tell the agent to inspect existing tags, workflow runs and published artifacts before taking action. There is no atomic transaction spanning Git and external registries, so exactly-once publication cannot be guaranteed after a crash before the agent returns its receipt. Reconciliation reduces this risk. The baseline advances only to the verified tagged commit; later commits remain eligible for the next release.
 
@@ -62,14 +65,18 @@ Restarting immediately resumes a pending job, even if its saved retry timer has 
 
 ## Publishability before publication
 
-Every attempt starts with a separate preparation session using the embedded [preflight skill](skills/preflight.md). That session can prepare code and validation infrastructure, but its instructions prohibit tags, public releases and registry uploads. It must enumerate every intended publication destination and return a plan containing:
+A new release starts with a separate preparation session using the embedded [preflight skill](skills/preflight.md). That session can prepare code and validation infrastructure, but its instructions prohibit tags, public releases and registry uploads. It must enumerate every intended publication destination and return a plan containing:
 
 - The exact prepared commit and proposed tag.
 - Each destination's version and actual publishing identity/environment.
 - Reproducible non-publishing commands checking build/package validity, version availability and publishing authorization for each destination.
 - A post-publication verification command for each destination.
 
-The daemon checks the plan's completeness, requires a clean checkout at the prepared commit, runs every preflight command itself, and checks the tree again. Only then does it start a separate publication session. A failed command or missing check prevents that session from starting. Publication must report the approved commit and tag. Each new attempt repeats preparation and validation; a fix that changes the plan requires new preflight checks.
+The daemon checks the plan's completeness, requires a clean checkout at the prepared commit, runs the preflight commands itself, and checks the tree again. Successful build checks are saved individually, so an interruption during a later check preserves completed work. Only then does it start a separate publication session. A failed command or missing check prevents publication. Publication must report the approved commit and tag.
+
+Retries reuse the saved plan when the checkout is clean at the planned commit and no gate failure or blocked publication requires preparation repairs. Successful build checks are reused only for the identical plan, target and check; changed commands, destinations or commits invalidate that evidence, as does an observed dirty checkout. Authorization, version availability, other check kinds and the operator preflight always run again before another publication session. Keep mutable prerequisites out of build checks. Cached build success establishes validation, not the continued presence of local build outputs; the publication procedure must produce missing artifacts as needed. Older state files without checkpoints run the checks once to establish them.
+
+The publication agent receives the plan and the time the daemon completed its gate. Its instructions limit it to reconciliation, publication and a prompt receipt, using the existing validation evidence. Code or workflow repairs return to preparation with the specific failure. The daemon still independently verifies all published destinations. GitHub waiting instructions use bounded polling with status changes and occasional heartbeats instead of repeatedly printing the full job table.
 
 For crates.io, `cargo publish --dry-run` checks packaging; it is not evidence of remote publish authorization. The skill requires separate checks of the actual publisher's ownership, token scope/expiry, or trusted-publisher configuration. When publishing through GitHub Actions, local credentials and secret names are insufficient: the checks must establish rights in the publishing workflow's environment. Unknown rights must block publication. The same principle applies to npm, PyPI, containers, signing and other destinations.
 

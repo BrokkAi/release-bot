@@ -50,6 +50,20 @@ func (c *Connection) SetModel(ctx context.Context, s *Session, model string) err
 	return c.setSelection(ctx, s, *option, model)
 }
 
+// SetEffort uses the current model's advertised reasoning levels. Call after
+// SetModel because model selection may replace the available effort options.
+func (c *Connection) SetEffort(ctx context.Context, s *Session, effort string) error {
+	option := s.selector("thought_level")
+	if option == nil {
+		// Codex's conventional ID also works when categories are omitted.
+		option = s.selector("reasoning_effort")
+	}
+	if option == nil {
+		return fmt.Errorf("agent does not advertise ACP reasoning effort selection; cannot select %q (update or choose an agent that supports session config options)", effort)
+	}
+	return c.setSelection(ctx, s, *option, effort)
+}
+
 func (c *Connection) setSelection(ctx context.Context, s *Session, option ConfigOption, value string) error {
 	var available []string
 	found := false

@@ -157,3 +157,52 @@ func TestConsoleJoinsLiveTranscriptFragments(t *testing.T) {
 		t.Fatal("console exposed stream implementation fields")
 	}
 }
+
+func TestEffortFlagAndConfiguration(t *testing.T) {
+	source := cliRepository(t)
+	cfg, err := bot.Discover(context.Background(), source, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Agent.Effort = "high"
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(file, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{source}, ""},
+		{[]string{source, "--effort", "low"}, "low"},
+		{[]string{"--effort=medium", source}, "medium"},
+		{[]string{"--config", file}, "high"},
+		{[]string{"--config", file, "--effort", "low"}, "low"},
+		{[]string{source, "--model", "fixture-model", "--effort", "future-agent-value"}, "future-agent-value"},
+	} {
+		called := false
+		err := executeWithRun(context.Background(), tc.args, slog.New(slog.NewTextHandler(io.Discard, nil)), func(ctx context.Context, cfg bot.Config, log *slog.Logger, once, force bool) error {
+			called = true
+			if cfg.Agent.Effort != tc.want {
+				t.Fatalf("effort=%q want=%q", cfg.Agent.Effort, tc.want)
+			}
+			return nil
+		})
+		if err != nil || !called {
+			t.Fatalf("%v: %v", tc.args, err)
+		}
+	}
+	for _, value := range []string{"", "  "} {
+		err := executeWithRun(context.Background(), []string{source, "--effort=" + value}, slog.Default(), func(context.Context, bot.Config, *slog.Logger, bool, bool) error {
+			t.Fatal("empty effort started work")
+			return nil
+		})
+		if err == nil || !strings.Contains(err.Error(), "requires a reasoning effort value") {
+			t.Fatalf("empty effort accepted: %v", err)
+		}
+	}
+}

@@ -34,6 +34,7 @@ type AgentConfig struct {
 	AuthMethod  string            `json:"auth_method,omitempty"`
 	Mode        string            `json:"mode,omitempty"`
 	Model       string            `json:"model,omitempty"`
+	Effort      string            `json:"effort,omitempty"`
 }
 type GitHubConfig struct {
 	Repo      string   `json:"repo,omitempty"`
@@ -161,6 +162,9 @@ func (c Config) Validate() error {
 	}
 	if len(c.Agent.Command) == 0 || c.Agent.Command[0] == "" {
 		return errors.New("agent.command is required")
+	}
+	if c.Agent.Effort != "" && strings.TrimSpace(c.Agent.Effort) == "" {
+		return errors.New("agent.effort requires a reasoning effort value")
 	}
 	if c.GitHub.Repo != "" && !slug.MatchString(c.GitHub.Repo) {
 		return errors.New("github.repo must be owner/repository")

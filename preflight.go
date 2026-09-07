@@ -2,6 +2,7 @@ package releasebot
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -65,52 +66,109 @@ func (e *engine) publishAttempt(ctx context.Context, s *State) (Result, error) {
 	// and may only publish the exact plan that passed the gate.
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(e.config.Timeout))
 	defer cancel()
-	s.Job.Phase = "preflight"
-	if err := writeState(e.config, s); err != nil {
-		return Result{}, err
-	}
-	prepared, err := e.agent.Execute(ctx, releasePrompt(e.config, s))
-	if err != nil {
-		return Result{}, fmt.Errorf("preflight agent: %w", err)
-	}
-	if prepared.Status != "ready" {
-		return Result{}, errors.New("preflight requires status ready; publication is not authorized in this phase")
-	}
-	if err := prepared.Plan.validate(); err != nil {
-		return Result{}, err
-	}
-	if e.config.GitHubRepo() != "" && len(e.config.GitHub.Workflows) == 0 && len(prepared.Plan.GitHubWorkflows) == 0 {
-		return Result{}, errors.New("preflight must discover the GitHub workflows required for this release and include github_workflows in the plan")
-	}
-	for _, workflow := range prepared.Plan.GitHubWorkflows {
-		if strings.TrimSpace(workflow) == "" {
-			return Result{}, errors.New("discovered workflow names must not be empty")
+	job := s.Job
+	usable := (job.Phase == "validating" || job.Phase == "publish") && !job.NeedsPreparation && e.validatePlan(job.Plan) == nil
+	if usable {
+		if err := e.checkPreparedTree(ctx, job.Plan.Commit); err != nil {
+			if ctx.Err() != nil {
+				return Result{}, ctx.Err()
+			}
+			usable = false
+			job.BuildChecks = nil
+			e.log.Info("Preparation checkpoint invalidated", "reason", err)
 		}
 	}
-	s.Job.Plan = prepared.Plan
+	if !usable {
+		if job.Plan != nil && e.checkPreparedTree(ctx, job.Plan.Commit) != nil {
+			job.BuildChecks = nil
+		}
+		job.Phase = "preflight"
+		job.NeedsPreparation = true
+		job.ValidatedAt = time.Time{}
+		// Preserve the prior plan and failure as focused repair context.
+		if err := writeState(e.config, s); err != nil {
+			return Result{}, err
+		}
+		prepared, err := e.agent.Execute(ctx, releasePrompt(e.config, s))
+		if err != nil {
+			return Result{}, fmt.Errorf("preflight agent: %w", err)
+		}
+		if prepared.Status != "ready" {
+			return Result{}, errors.New("preflight requires status ready; publication is not authorized in this phase")
+		}
+		if err := e.validatePlan(prepared.Plan); err != nil {
+			return Result{}, err
+		}
+		job.Plan = prepared.Plan
+		job.NeedsPreparation = false
+	} else {
+		e.log.Info("Resuming prepared release", "commit", job.Plan.Commit, "tag", job.Plan.Tag)
+	}
 	s.Job.Phase = "validating"
+	job.ValidatedAt = time.Time{}
 	if err := writeState(e.config, s); err != nil {
 		return Result{}, err
 	}
-	if err := e.validatePublication(ctx, s.Job.Target, prepared.Plan); err != nil {
+	if err := e.validatePublicationCheckpoint(ctx, s); err != nil {
+		if ctx.Err() == nil {
+			job.NeedsPreparation = true
+			if saveErr := writeState(e.config, s); saveErr != nil {
+				return Result{}, saveErr
+			}
+		}
 		return Result{}, fmt.Errorf("publishability gate: %w", err)
 	}
 	s.Job.Phase = "publish"
+	job.ValidatedAt = e.now().UTC()
 	if err := writeState(e.config, s); err != nil {
 		return Result{}, err
 	}
-	e.log.Info("publishability verified", "commit", prepared.Plan.Commit, "tag", prepared.Plan.Tag, "destinations", len(prepared.Plan.Destinations))
+	e.log.Info("publishability verified", "commit", job.Plan.Commit, "tag", job.Plan.Tag, "destinations", len(job.Plan.Destinations))
 	result, err := e.agent.Execute(ctx, releasePrompt(e.config, s))
+	var blocked *blockedResultError
+	if errors.As(err, &blocked) || (err == nil && result.Status != "released") {
+		job.NeedsPreparation = true
+		if saveErr := writeState(e.config, s); saveErr != nil {
+			return Result{}, saveErr
+		}
+	}
 	if err != nil {
 		return Result{}, err
 	}
-	if result.Commit != prepared.Plan.Commit || result.Tag != prepared.Plan.Tag {
+	if result.Commit != job.Plan.Commit || result.Tag != job.Plan.Tag {
+		job.NeedsPreparation = true
+		if err := writeState(e.config, s); err != nil {
+			return Result{}, err
+		}
 		return Result{}, errors.New("publication differs from the validated commit/tag; a new preflight is required")
 	}
-	result.Plan = prepared.Plan
+	result.Plan = job.Plan
 	return result, nil
 }
+func (e *engine) validatePlan(plan *PublicationPlan) error {
+	if err := plan.validate(); err != nil {
+		return err
+	}
+	if e.config.GitHubRepo() != "" && len(e.config.GitHub.Workflows) == 0 && len(plan.GitHubWorkflows) == 0 {
+		return errors.New("preflight must discover the GitHub workflows required for this release and include github_workflows in the plan")
+	}
+	for _, workflow := range plan.GitHubWorkflows {
+		if strings.TrimSpace(workflow) == "" {
+			return errors.New("discovered workflow names must not be empty")
+		}
+	}
+	return nil
+}
+
+// Direct validation has no persisted cache; the daemon uses the checkpoint path.
 func (e *engine) validatePublication(ctx context.Context, target string, plan *PublicationPlan) error {
+	return e.validatePublicationChecks(ctx, target, plan, nil)
+}
+func (e *engine) validatePublicationCheckpoint(ctx context.Context, s *State) error {
+	s.Job.ValidatedAt = time.Time{}
+	return e.validatePublicationChecks(ctx, s.Job.Target, s.Job.Plan, s)
+}
+func (e *engine) validatePublicationChecks(ctx context.Context, target string, plan *PublicationPlan, state *State) error {
 	if err := plan.validate(); err != nil {
 		return err
 	}
@@ -125,12 +183,34 @@ func (e *engine) validatePublication(ctx context.Context, target string, plan *P
 	}
 	encoded, _ := json.Marshal(plan)
 	env := map[string]string{"RELEASE_COMMIT": plan.Commit, "RELEASE_TAG": plan.Tag, "RELEASE_TARGET": target, "RELEASE_PLAN_JSON": string(encoded)}
-	for _, destination := range plan.Destinations {
+	for destinationIndex, destination := range plan.Destinations {
 		env["RELEASE_DESTINATION"] = destination.Name
-		for _, check := range destination.Checks {
+		for index, check := range destination.Checks {
+			// Bind cached build success to the full plan, target and check position.
+			// Authorization, version and unknown check kinds are always live.
+			key := fmt.Sprintf("%x", sha256.Sum256([]byte(fmt.Sprintf("%s\n%s\n%d\n%d", encoded, target, destinationIndex, index))))
+			if state != nil && check.Kind == "build" && state.Job.BuildChecks[key] {
+				e.log.Info("Reusing successful build check", "destination", destination.Name, "commit", plan.Commit)
+				continue
+			}
 			e.log.Info("checking publishability", "destination", destination.Name, "check", check.Kind, "environment", destination.Environment)
 			if _, err := osrun.Run(ctx, e.config.Directory, env, check.Command...); err != nil {
 				return fmt.Errorf("%s %s: %w", destination.Name, check.Kind, err)
+			}
+			if err := e.checkPreparedTree(ctx, plan.Commit); err != nil {
+				if state != nil {
+					state.Job.BuildChecks = nil
+				}
+				return err
+			}
+			if state != nil && check.Kind == "build" {
+				if state.Job.BuildChecks == nil {
+					state.Job.BuildChecks = make(map[string]bool)
+				}
+				state.Job.BuildChecks[key] = true
+				if err := writeState(e.config, state); err != nil {
+					return err
+				}
 			}
 		}
 	}

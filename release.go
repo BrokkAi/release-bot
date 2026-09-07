@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"time"
 
 	"github.com/BrokkAi/release-bot/internal/osrun"
@@ -171,14 +172,28 @@ func (e *engine) resume(ctx context.Context, s *State) error {
 	if e.starting {
 		e.log.Info("Resuming pending release on startup", "phase", j.Phase, "previous_error", j.Failure, "interruption", j.Interruption)
 	}
-	if j.Candidate != nil {
-		if err := e.verify(ctx, j.Target, *j.Candidate); err == nil {
-			return e.finish(s, *j.Candidate)
+	candidate := j.Candidate
+	if candidate == nil && j.Phase == "publish" && e.validatePlan(j.Plan) == nil {
+		// Publication can finish before the agent delivers its receipt. Verify
+		// the saved plan before launching another agent or checking availability.
+		candidate = &Result{Status: "released", Commit: j.Plan.Commit, Tag: j.Plan.Tag, Plan: j.Plan}
+		if e.config.GitHubRepo() != "" {
+			candidate.URL = "https://" + e.config.GitHub.Host + "/" + e.config.GitHubRepo() + "/releases/tag/" + url.PathEscape(j.Plan.Tag)
+		}
+	}
+	if candidate != nil {
+		e.log.Info("Reconciling previous publication", "tag", candidate.Tag)
+		if err := e.verify(ctx, j.Target, *candidate); err == nil {
+			return e.finish(s, *candidate)
 		} else {
 			if errors.Is(ctx.Err(), context.Canceled) {
 				return e.interrupted(ctx, s, false)
 			}
-			j.Failure = err.Error()
+			// A speculative receipt may simply have no remote tag yet. Keep
+			// the publisher's actionable failure for the preparation agent.
+			if j.Candidate != nil || j.Failure == "" {
+				j.Failure = err.Error()
+			}
 		}
 	}
 	if j.Tries >= e.config.Attempts {

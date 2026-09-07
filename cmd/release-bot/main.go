@@ -59,6 +59,7 @@ func executeWithRun(ctx context.Context, args []string, logger *slog.Logger, run
 	branch := flags.String("branch", "", "branch to release (default: repository's default branch)")
 	selectedAgent := flags.String("agent", "", "ACP agent executable (default: Codex)")
 	model := flags.String("model", "", "model ID to use (default: agent's configured model)")
+	effort := flags.String("effort", "", "reasoning effort to use, such as low, medium or high (default: agent's configured effort)")
 	var agentArgs []string
 	flags.Func("agent-arg", "argument for the agent; repeat as needed", func(value string) error { agentArgs = append(agentArgs, value); return nil })
 	once := flags.Bool("once", mode == "once", "check/work once, then exit")
@@ -103,6 +104,12 @@ func executeWithRun(ctx context.Context, args []string, logger *slog.Logger, run
 			cfg.Agent.Model = *model
 			if strings.TrimSpace(*model) == "" {
 				err = errors.New("--model requires a model ID")
+			}
+		}
+		if f.Name == "effort" {
+			cfg.Agent.Effort = *effort
+			if strings.TrimSpace(*effort) == "" {
+				err = errors.New("--effort requires a reasoning effort value")
 			}
 		}
 	})

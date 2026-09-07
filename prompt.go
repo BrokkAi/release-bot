@@ -46,7 +46,11 @@ func parseResult(text string) (Result, error) {
 		return result, err
 	}
 	if result.Status != "released" && result.Status != "ready" {
-		return result, errors.New("release blocked: " + result.Detail)
+		return result, &blockedResultError{result.Detail}
 	}
 	return result, nil
 }
+
+type blockedResultError struct{ detail string }
+
+func (e *blockedResultError) Error() string { return "release blocked: " + e.detail }
