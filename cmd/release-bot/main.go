@@ -25,7 +25,12 @@ func main() {
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	if err := execute(ctx, os.Args[1:], logger); err != nil && !errors.Is(err, context.Canceled) {
+	err := execute(ctx, os.Args[1:], logger)
+	if ctx.Err() != nil {
+		logger.Info("Stopped", "reason", context.Cause(ctx))
+		return
+	}
+	if err != nil {
 		logger.Error("stopped", "error", err)
 		os.Exit(1)
 	}
@@ -131,6 +136,9 @@ func executeWithRun(ctx context.Context, args []string, logger *slog.Logger, run
 			fmt.Fprintf(os.Stdout, "In progress: %s (attempt %d/%d)\n", state.Job.Phase, state.Job.Tries, cfg.Attempts)
 			if state.Job.Failure != "" {
 				fmt.Fprintln(os.Stdout, state.Job.Failure)
+			}
+			if state.Job.Interruption != "" {
+				fmt.Fprintln(os.Stdout, "Interrupted:", state.Job.Interruption)
 			}
 		} else {
 			fmt.Fprintln(os.Stdout, "No pending release.")

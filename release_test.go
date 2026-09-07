@@ -219,6 +219,94 @@ func TestAttemptBudgetAndCorruptState(t *testing.T) {
 		t.Fatal("corrupted publication state accepted")
 	}
 }
+func TestStartupResumesPendingReleaseWithoutWaiting(t *testing.T) {
+	f := newFixture(t)
+	calls := 0
+	f.engine.agent = scriptedAgent(func(context.Context, string) (Result, error) {
+		calls++
+		return Result{}, errors.New("fixture failure")
+	})
+	if err := f.engine.cycle(context.Background(), false); err == nil {
+		t.Fatal("expected initial failure")
+	}
+	if err := f.engine.cycle(context.Background(), false); err != nil || calls != 1 {
+		t.Fatal("ordinary polling must still honor failure backoff")
+	}
+	restarted := *f.engine
+	restarted.starting = true
+	if err := restarted.cycle(context.Background(), false); err == nil || calls != 2 {
+		t.Fatalf("startup did not retry immediately: calls=%d err=%v", calls, err)
+	}
+	restarted.config.Attempts = 2
+	if err := restarted.cycle(context.Background(), false); err == nil || calls != 2 {
+		t.Fatal("restart bypassed the real failure budget")
+	}
+}
+
+func TestRunStartsAgentDespiteSavedRetryTimer(t *testing.T) {
+	f := newFixture(t)
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := f.engine.config
+	cfg.Agent = AgentConfig{Command: []string{executable, "-test.run=^TestWirePeer$"}, Environment: map[string]string{"RELEASE_BOT_WIRE_PEER": "normal"}}
+	s := &State{Format: 1, Remote: cfg.Remote, Branch: cfg.Branch, Directory: cfg.Directory, Job: &Job{Target: f.head, Phase: "preflight", Tries: 1, RetryAt: time.Now().Add(time.Hour), Failure: "preflight agent: context canceled"}}
+	if err := writeState(cfg, s); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	// The real subprocess peer reads/writes a fixture file, then deliberately
+	// returns a publication receipt instead of a preparation plan.
+	err = Run(ctx, cfg, f.engine.log, true, false)
+	if err == nil || !strings.Contains(err.Error(), "preflight requires status ready") {
+		t.Fatalf("Run did not reach the agent on startup: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(cfg.Directory, "wire.txt")); err != nil {
+		t.Fatal("agent tool round trip did not execute:", err)
+	}
+}
+
+func TestInterruptedReleaseResumesWithoutFailureBackoff(t *testing.T) {
+	for _, publishing := range []bool{false, true} {
+		t.Run(fmt.Sprint("publishing=", publishing), func(t *testing.T) {
+			f := newFixture(t)
+			ctx, cancel := context.WithCancelCause(context.Background())
+			defer cancel(nil)
+			f.engine.agent = scriptedAgent(func(ctx context.Context, prompt string) (Result, error) {
+				if publishing && strings.HasPrefix(prompt, "# Publishability") {
+					return Result{Status: "ready", Plan: f.plan()}, nil
+				}
+				if publishing {
+					f.published(t, true)
+				}
+				cancel(errors.New("fixture SIGTERM"))
+				return Result{}, ctx.Err()
+			})
+			if err := f.engine.cycle(ctx, false); !errors.Is(err, context.Canceled) {
+				t.Fatalf("lost interruption: %v", err)
+			}
+			s := fixtureState(t, f)
+			if s.Job == nil || s.Job.Tries != 0 || !s.Job.RetryAt.IsZero() || s.Job.Failure != "" || s.Job.Interruption != "fixture SIGTERM" {
+				t.Fatalf("interruption counted as a failure: %+v", s.Job)
+			}
+			f.engine.agent = scriptedAgent(func(ctx context.Context, prompt string) (Result, error) {
+				if strings.HasPrefix(prompt, "# Publishability") {
+					return Result{Status: "ready", Plan: f.plan()}, nil
+				}
+				return f.published(t, true), nil
+			})
+			if err := f.engine.cycle(context.Background(), false); err != nil {
+				t.Fatal("could not resume immediately:", err)
+			}
+			if fixtureState(t, f).Job != nil {
+				t.Fatal("resumed job did not finish")
+			}
+		})
+	}
+}
+
 func TestRemoteTagAndPreparedCommitGuards(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()

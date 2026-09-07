@@ -3,3 +3,5 @@
 /release-bot.json
 /release-bot
 /coverage.out
+/dist/
+__pycache__/

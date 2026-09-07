@@ -12,12 +12,13 @@ import (
 )
 
 type engine struct {
-	config Config
-	git    checkout
-	github github
-	agent  Agent
-	log    *slog.Logger
-	now    func() time.Time
+	config   Config
+	git      checkout
+	github   github
+	agent    Agent
+	log      *slog.Logger
+	now      func() time.Time
+	starting bool
 }
 
 // Run watches one repository. Once executes one poll/recovery attempt; force
@@ -31,7 +32,7 @@ func Run(ctx context.Context, cfg Config, log *slog.Logger, once, force bool) er
 		return err
 	}
 	defer unlock()
-	e := engine{config: cfg, git: checkout{cfg}, github: github{config: cfg}, agent: agentProcess{cfg, log}, log: log, now: time.Now}
+	e := engine{config: cfg, git: checkout{cfg}, github: github{config: cfg}, agent: agentProcess{cfg, log}, log: log, now: time.Now, starting: true}
 	// Check immediately, including on restart; polling only delays later checks.
 	for {
 		if err := ctx.Err(); err != nil {
@@ -39,7 +40,11 @@ func Run(ctx context.Context, cfg Config, log *slog.Logger, once, force bool) er
 		}
 		cycleCtx, cancel := context.WithTimeout(ctx, time.Duration(cfg.Timeout)+2*time.Duration(cfg.VerificationTimeout)+5*time.Minute)
 		err := e.cycle(cycleCtx, force)
+		e.starting = false
 		cancel()
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		if once {
 			return err
 		}
@@ -159,14 +164,20 @@ func (e *engine) cycle(ctx context.Context, force bool) error {
 }
 func (e *engine) resume(ctx context.Context, s *State) error {
 	j := s.Job
-	if e.now().Before(j.RetryAt) {
-		e.log.Info("retry scheduled", "at", j.RetryAt)
+	if e.now().Before(j.RetryAt) && !e.starting {
+		e.log.Info("retry scheduled", "at", j.RetryAt, "previous_error", j.Failure)
 		return nil
+	}
+	if e.starting {
+		e.log.Info("Resuming pending release on startup", "phase", j.Phase, "previous_error", j.Failure, "interruption", j.Interruption)
 	}
 	if j.Candidate != nil {
 		if err := e.verify(ctx, j.Target, *j.Candidate); err == nil {
 			return e.finish(s, *j.Candidate)
 		} else {
+			if errors.Is(ctx.Err(), context.Canceled) {
+				return e.interrupted(ctx, s, false)
+			}
 			j.Failure = err.Error()
 		}
 	}
@@ -178,6 +189,7 @@ func (e *engine) resume(ctx context.Context, s *State) error {
 		return errors.New("agent retry budget exhausted; inspect state/sessions and use retry to resume this release")
 	}
 	j.Tries++
+	j.Interruption = ""
 	j.RetryAt = e.now().Add(time.Duration(e.config.RetryDelay))
 	// The target and consumed attempt are durable before any agent side effects.
 	if err := writeState(e.config, s); err != nil {
@@ -197,6 +209,9 @@ func (e *engine) resume(ctx context.Context, s *State) error {
 			return e.finish(s, r)
 		}
 	}
+	if errors.Is(ctx.Err(), context.Canceled) {
+		return e.interrupted(ctx, s, true)
+	}
 	detail := err.Error()
 	if len(detail) > 64<<10 {
 		detail = detail[len(detail)-(64<<10):]
@@ -207,6 +222,19 @@ func (e *engine) resume(ctx context.Context, s *State) error {
 		return saveErr
 	}
 	return fmt.Errorf("release attempt %d/%d: %w", j.Tries, e.config.Attempts, err)
+}
+
+func (e *engine) interrupted(ctx context.Context, s *State, refund bool) error {
+	if refund {
+		s.Job.Tries--
+	}
+	s.Job.Interruption = context.Cause(ctx).Error()
+	s.Job.RetryAt = time.Time{}
+	if err := writeState(e.config, s); err != nil {
+		return err
+	}
+	e.log.Info("Release interrupted; saved for immediate resume", "reason", s.Job.Interruption, "phase", s.Job.Phase)
+	return ctx.Err()
 }
 func (e *engine) verify(ctx context.Context, target string, r Result) error {
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(e.config.VerificationTimeout))

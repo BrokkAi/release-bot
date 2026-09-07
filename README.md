@@ -58,6 +58,8 @@ A release job records its target before starting the agent. Failed jobs preserve
 
 Recovery instructions tell the agent to inspect existing tags, workflow runs and published artifacts before taking action. There is no atomic transaction spanning Git and external registries, so exactly-once publication cannot be guaranteed after a crash before the agent returns its receipt. Reconciliation reduces this risk. The baseline advances only to the verified tagged commit; later commits remain eligible for the next release.
 
+Restarting immediately resumes a pending job, even if its saved retry timer has not elapsed. The failure budget still applies to actual failures. Ctrl+C or SIGTERM preserves unfinished work, records the stop reason, and does not consume an attempt or impose a retry delay. Ordinary polling after an actual failure retains the configured backoff.
+
 ## Publishability before publication
 
 Every attempt starts with a separate preparation session using the embedded [preflight skill](skills/preflight.md). That session can prepare code and validation infrastructure, but its instructions prohibit tags, public releases and registry uploads. It must enumerate every intended publication destination and return a plan containing:
@@ -127,8 +129,16 @@ Readable progress goes to stderr; `--json` selects structured logs. Private JSON
 
 ## Development and protocol scope
 
+This repository's [release instructions](RELEASING.md) describe its CI and release workflows. CI runs on pushes and pull requests; the release workflow builds Linux/macOS archives, checks publisher access, and verifies staged assets before publication.
+
 ```sh
 make check
+```
+
+To test your real ACP adapter and model with a read-only fixture, without running a release:
+
+```sh
+RELEASE_BOT_LIVE_SMOKE=1 RELEASE_BOT_LIVE_MODEL=gpt-5.6-sol go test -run '^TestLiveACP$' -v .
 ```
 
 The ACP implementation includes newline JSON-RPC framing, bidirectional requests, ordered notifications, request errors and cancellation, initialization/version checks, session creation, optional authentication/modes, prompt completion, permission decisions, file reads/writes, and the full terminal lifecycle. Generic `Call`/`Notify` methods allow extension methods. Optional session history, MCP configuration, elicitation and v2 are not advertised. Protocol references are recorded in [docs/protocol.md](docs/protocol.md).
