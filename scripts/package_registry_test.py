@@ -51,10 +51,11 @@ class PackageRegistry(unittest.TestCase):
             command.assert_not_called()
 
     def test_native_packages_publish_before_root_then_python(self):
+        events = []
         with patch.object(package_registry, "npm_exists", return_value=False), \
                 patch.object(package_registry, "python_exists", return_value=False), \
-                patch.object(package_registry, "wait_visible") as wait, \
-                patch.object(package_registry.subprocess, "run") as command:
+                patch.object(package_registry, "wait_visible", side_effect=lambda check: events.append("verify")) as wait, \
+                patch.object(package_registry.subprocess, "run", side_effect=lambda *args, **kwargs: events.append("publish")) as command:
             package_registry.run("publish", self.root)
             calls = [call.args[0] for call in command.call_args_list]
             self.assertEqual(len(calls), 6)
@@ -63,6 +64,7 @@ class PackageRegistry(unittest.TestCase):
             self.assertEqual(calls[5][:2], ["uv", "publish"])
             self.assertFalse(any(value.endswith(".gitignore") for value in calls[5]))
             self.assertEqual(wait.call_count, 6)
+            self.assertEqual(events, ["publish"] * 4 + ["verify"] * 4 + ["publish", "verify", "publish", "verify"])
 
     def test_selected_registry_never_contacts_or_publishes_the_other(self):
         for registry, expected_calls in (("npm", 5), ("pypi", 1)):
@@ -118,3 +120,19 @@ class PackageRegistry(unittest.TestCase):
                 else:
                     with self.assertRaises(urllib.error.HTTPError):
                         package_registry.fetch_json("https://registry.test")
+
+    def test_registry_processing_can_take_several_minutes(self):
+        from unittest.mock import Mock
+        check = Mock(side_effect=[False] * 30 + [True])
+        with patch.object(package_registry.time, "sleep") as sleep:
+            package_registry.wait_visible(check)
+        self.assertEqual(sum(call.args[0] for call in sleep.call_args_list), 300)
+
+    def test_registry_wait_is_bounded_and_does_not_hide_conflicts(self):
+        from unittest.mock import Mock
+        with patch.object(package_registry.time, "sleep") as sleep:
+            with self.assertRaisesRegex(ValueError, "10 minutes"):
+                package_registry.wait_visible(lambda: False)
+            self.assertEqual(sum(call.args[0] for call in sleep.call_args_list), 600)
+            with self.assertRaisesRegex(ValueError, "conflict"):
+                package_registry.wait_visible(Mock(side_effect=ValueError("conflict")))
