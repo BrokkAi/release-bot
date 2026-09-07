@@ -178,6 +178,12 @@ func (e *engine) validatePublicationChecks(ctx context.Context, target string, p
 	if err := e.git.contains(ctx, plan.Commit, target); err != nil {
 		return err
 	}
+	if err := e.git.fetch(ctx); err != nil {
+		return err
+	}
+	if err := e.git.contains(ctx, e.git.branchRef(), plan.Commit); err != nil {
+		return fmt.Errorf("prepared commit is not on the remote release branch; finish merging the preparation PR first: %w", err)
+	}
 	if err := e.checkPreparedTree(ctx, plan.Commit); err != nil {
 		return err
 	}

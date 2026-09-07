@@ -70,7 +70,7 @@ func DefaultConfig() Config {
 		Branch: "master", Directory: "var/checkout", StateDirectory: "var/state",
 		InstructionFiles: []string{"AGENTS.md", "RELEASING.md", "RELEASE.md", "CONTRIBUTING.md"},
 		Agent:            AgentConfig{Command: []string{"codex-acp"}}, GitHub: GitHubConfig{Host: "github.com"},
-		Poll: Duration(5 * time.Minute), Daily: Duration(24 * time.Hour), MinimumGap: Duration(2 * time.Hour), Quiet: Duration(15 * time.Minute), BurstWindow: Duration(2 * time.Hour), Burst: 20,
+		Poll: Duration(5 * time.Minute), Daily: Duration(24 * time.Hour), MinimumGap: Duration(2 * time.Hour), Quiet: Duration(15 * time.Minute), BurstWindow: Duration(2 * time.Hour), Burst: 5,
 		Timeout: Duration(2 * time.Hour), VerificationTimeout: Duration(30 * time.Minute), RetryDelay: Duration(15 * time.Minute), Attempts: 3,
 	}
 }

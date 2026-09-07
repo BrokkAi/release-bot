@@ -160,7 +160,13 @@ func (e *engine) cycle(ctx context.Context, force bool) error {
 	if err := e.git.advance(ctx); err != nil {
 		return err
 	}
-	s.Job = &Job{Target: head, Started: now}
+	remoteHead, err := e.git.resolve(ctx, e.git.branchRef())
+	if err != nil {
+		return err
+	}
+	// Keep the remote baseline as the ancestry requirement: preparation may
+	// merge the local work through a PR using squash or rebase.
+	s.Job = &Job{Target: remoteHead, Started: now}
 	if err := writeState(e.config, s); err != nil {
 		return err
 	}

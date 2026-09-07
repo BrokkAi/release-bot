@@ -333,7 +333,7 @@ func TestScheduleAndLocking(t *testing.T) {
 		total, recent int
 		want          bool
 	}{
-		{48 * time.Hour, time.Hour, 0, 0, false}, {24 * time.Hour, 0, 1, 1, true}, {time.Hour, time.Hour, 30, 30, false}, {3 * time.Hour, 20 * time.Minute, 20, 20, true}, {3 * time.Hour, 0, 20, 20, false}, {3 * time.Hour, time.Hour, 40, 1, false},
+		{48 * time.Hour, time.Hour, 0, 0, false}, {24 * time.Hour, 0, 1, 1, true}, {time.Hour, time.Hour, 30, 30, false}, {3 * time.Hour, 20 * time.Minute, 5, 5, true}, {3 * time.Hour, 20 * time.Minute, 4, 4, false}, {3 * time.Hour, 0, 5, 5, false}, {3 * time.Hour, time.Hour, 40, 1, false},
 	} {
 		s := &State{ReleasedAt: now.Add(-tc.age), ChangedAt: now.Add(-tc.quiet)}
 		if (due(cfg, s, tc.total, tc.recent, now) != "") != tc.want {

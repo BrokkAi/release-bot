@@ -17,7 +17,7 @@
   "minimum_gap": "2h",
   "quiet": "15m",
   "burst_window": "2h",
-  "burst": 20,
+  "burst": 5,
   "timeout": "2h",
   "verification_timeout": "30m",
   "retry_delay": "15m",

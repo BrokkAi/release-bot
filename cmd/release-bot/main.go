@@ -60,6 +60,7 @@ func executeWithRun(ctx context.Context, args []string, logger *slog.Logger, run
 	selectedAgent := flags.String("agent", "", "ACP agent executable (default: Codex)")
 	model := flags.String("model", "", "model ID to use (default: agent's configured model)")
 	effort := flags.String("effort", "", "reasoning effort to use, such as low, medium or high (default: agent's configured effort)")
+	burst := flags.Int("burst", bot.DefaultConfig().Burst, "unreleased commits within the burst window to trigger an early release; 0 disables (overrides config; minimum gap and quiet period still apply)")
 	var agentArgs []string
 	flags.Func("agent-arg", "argument for the agent; repeat as needed", func(value string) error { agentArgs = append(agentArgs, value); return nil })
 	once := flags.Bool("once", mode == "once", "check/work once, then exit")
@@ -100,6 +101,12 @@ func executeWithRun(ctx context.Context, args []string, logger *slog.Logger, run
 		cfg.Agent.Command = []string{*selectedAgent}
 	}
 	flags.Visit(func(f *flag.Flag) {
+		if f.Name == "burst" {
+			cfg.Burst = *burst
+			if *burst < 0 {
+				err = errors.New("--burst must be zero or greater")
+			}
+		}
 		if f.Name == "model" {
 			cfg.Agent.Model = *model
 			if strings.TrimSpace(*model) == "" {

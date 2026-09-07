@@ -206,3 +206,52 @@ func TestEffortFlagAndConfiguration(t *testing.T) {
 		}
 	}
 }
+
+func TestBurstFlagAndConfiguration(t *testing.T) {
+	source := cliRepository(t)
+	cfg, err := bot.Discover(context.Background(), source, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Burst = 8
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(file, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		args []string
+		want int
+	}{
+		{[]string{source}, 5},
+		{[]string{source, "--burst", "3"}, 3},
+		{[]string{"--burst=2", source}, 2},
+		{[]string{"--config", file}, 8},
+		{[]string{"--config", file, "--burst", "5"}, 5},
+		{[]string{"--config", file, "--burst", "0"}, 0},
+	} {
+		called := false
+		err := executeWithRun(context.Background(), tc.args, slog.New(slog.NewTextHandler(io.Discard, nil)), func(ctx context.Context, cfg bot.Config, log *slog.Logger, once, force bool) error {
+			called = true
+			if cfg.Burst != tc.want {
+				t.Fatalf("burst=%d want=%d", cfg.Burst, tc.want)
+			}
+			return nil
+		})
+		if err != nil || !called {
+			t.Fatalf("%v: %v", tc.args, err)
+		}
+	}
+	for _, value := range []string{"-1", "invalid"} {
+		err := executeWithRun(context.Background(), []string{source, "--burst=" + value}, slog.Default(), func(context.Context, bot.Config, *slog.Logger, bool, bool) error {
+			t.Fatal("invalid burst started work")
+			return nil
+		})
+		if err == nil {
+			t.Fatalf("invalid burst accepted: %s", value)
+		}
+	}
+}
