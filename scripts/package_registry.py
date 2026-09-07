@@ -36,7 +36,9 @@ def npm_exists(package):
 
 
 def python_files(directory):
-    files = sorted(directory.iterdir())
+    # uv may create a hidden .gitignore in its output directory; only the
+    # distribution files are registry inputs.
+    files = sorted(path for path in directory.iterdir() if not path.name.startswith("."))
     if len(files) != 2 or sum(p.name.endswith(".whl") for p in files) != 1 or sum(p.name.endswith(".tar.gz") for p in files) != 1:
         raise ValueError("expected exactly one Python wheel and one sdist")
     return {p.name: release.digest(p.read_bytes()) for p in files}
