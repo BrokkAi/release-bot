@@ -135,3 +135,25 @@ func TestModelFlagAndConfiguration(t *testing.T) {
 		t.Fatalf("empty model accepted: %v", err)
 	}
 }
+
+func TestConsoleJoinsLiveTranscriptFragments(t *testing.T) {
+	var output strings.Builder
+	log := slog.New(newConsole(&output))
+	log.Info("agent transcript", "source", "Agent", "stream_id", "session", "text", "Checking ")
+	if !strings.Contains(output.String(), "Agent │ Checking ") {
+		t.Fatal("fragment was buffered instead of displayed immediately")
+	}
+	log.Info("agent transcript", "source", "Agent", "stream_id", "session", "text", "the build.\nNext")
+	log.Info("Tool", "title", "go test ./...")
+	log.Info("agent transcript", "source", "Tool output", "stream_id", "a", "text", "first")
+	log.Info("agent transcript", "source", "Tool output", "stream_id", "b", "text", "second\n")
+	text := output.String()
+	for _, expected := range []string{"Agent │ Checking the build.\n", "Agent │ Next\n", "Tool output │ first\n", "Tool output │ second\n"} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("missing %q in %q", expected, text)
+		}
+	}
+	if strings.Contains(text, "agent transcript") || strings.Contains(text, "text:") {
+		t.Fatal("console exposed stream implementation fields")
+	}
+}

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/BrokkAi/release-bot/acp"
 	"github.com/BrokkAi/release-bot/internal/osrun"
@@ -42,7 +43,7 @@ func (a agentProcess) Execute(ctx context.Context, prompt string) (result Result
 	a.log.Info("Starting agent", "command", strings.Join(a.config.Agent.Command, " "), "transcript", transcript.Name())
 	cmd := osrun.StartCommand(context.Background(), a.config.Directory, a.config.Agent.Command, a.config.Agent.Environment)
 	diagnostics := &osrun.Tail{Capacity: 64 << 10}
-	cmd.Stderr = diagnostics
+	cmd.Stderr = io.MultiWriter(diagnostics, &transcriptWriter{log: a.log, source: "Agent stderr", record: host.record})
 	in, err := cmd.StdinPipe()
 	if err != nil {
 		return result, err
@@ -66,7 +67,22 @@ func (a agentProcess) Execute(ctx context.Context, prompt string) (result Result
 		}
 	}()
 	connection := acp.Connect(out, in, host.request, host.notification)
-	defer connection.Close()
+	phase := "initialize"
+	started := time.Now()
+	defer func() {
+		record := map[string]any{"event": "session_end", "phase": phase, "elapsed": time.Since(started).String()}
+		if runErr != nil {
+			record["error"] = runErr.Error()
+		}
+		if cause := context.Cause(ctx); cause != nil {
+			record["context_cause"] = cause.Error()
+		}
+		if err := connection.Err(); err != nil {
+			record["transport_error"] = err.Error()
+		}
+		_ = host.record(record)
+		_ = connection.Close()
+	}()
 	caps := acp.Capabilities{Terminal: true}
 	caps.FS.Read = true
 	caps.FS.Write = true
@@ -75,10 +91,12 @@ func (a agentProcess) Execute(ctx context.Context, prompt string) (result Result
 		return result, err
 	}
 	if a.config.Agent.AuthMethod != "" {
+		phase = "authenticate"
 		if err := connection.Authenticate(ctx, init, a.config.Agent.AuthMethod); err != nil {
 			return result, err
 		}
 	}
+	phase = "session/new"
 	session, err := connection.NewSession(ctx, a.config.Directory)
 	if err != nil {
 		return result, fmt.Errorf("create ACP session (check agent login): %w", err)
@@ -87,11 +105,13 @@ func (a agentProcess) Execute(ctx context.Context, prompt string) (result Result
 	host.session = session.ID
 	host.mu.Unlock()
 	if a.config.Agent.Mode != "" {
+		phase = "select mode"
 		if err := connection.SetMode(ctx, &session, a.config.Agent.Mode); err != nil {
 			return result, err
 		}
 	}
 	if a.config.Agent.Model != "" {
+		phase = "select model"
 		if err := connection.SetModel(ctx, &session, a.config.Agent.Model); err != nil {
 			return result, err
 		}
@@ -101,6 +121,7 @@ func (a agentProcess) Execute(ctx context.Context, prompt string) (result Result
 	if err := host.record(map[string]string{"prompt": prompt}); err != nil {
 		return result, err
 	}
+	phase = "session/prompt"
 	reason, err := connection.Prompt(ctx, session, prompt)
 	if err != nil {
 		return result, err
@@ -115,6 +136,7 @@ func (a agentProcess) Execute(ctx context.Context, prompt string) (result Result
 		return result, logErr
 	}
 	text, _ := host.answer.Text()
+	phase = "parse receipt"
 	return parseResult(text)
 }
 
@@ -132,6 +154,7 @@ type workspaceHost struct {
 	terminals  map[string]*commandTerminal
 	next       uint64
 	closing    bool
+	toolOutput map[string]*toolTranscript
 }
 
 func newHost(ctx context.Context, dir string, output io.Writer, log *slog.Logger) (*workspaceHost, error) {
@@ -140,7 +163,7 @@ func newHost(ctx context.Context, dir string, output io.Writer, log *slog.Logger
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(ctx)
-	return &workspaceHost{ctx: ctx, cancel: cancel, root: root, directory: dir, log: log, transcript: json.NewEncoder(output), answer: osrun.Tail{Capacity: 2 << 20}, terminals: make(map[string]*commandTerminal)}, nil
+	return &workspaceHost{ctx: ctx, cancel: cancel, root: root, directory: dir, log: log, transcript: json.NewEncoder(output), answer: osrun.Tail{Capacity: 2 << 20}, terminals: make(map[string]*commandTerminal), toolOutput: make(map[string]*toolTranscript)}, nil
 }
 func (h *workspaceHost) record(value any) error {
 	h.mu.Lock()
@@ -176,10 +199,7 @@ func (h *workspaceHost) notification(method string, raw json.RawMessage) error {
 			_, _ = h.answer.Write([]byte(content.Text))
 		}
 	}
-	if update.Update.Kind == "tool_call" {
-		h.log.Info("agent action", "title", update.Update.Title)
-	}
-	return nil
+	return h.showUpdate(update)
 }
 func (h *workspaceHost) request(ctx context.Context, method string, raw json.RawMessage) (any, error) {
 	var session struct {

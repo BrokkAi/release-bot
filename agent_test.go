@@ -3,6 +3,7 @@ package releasebot
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -201,6 +202,66 @@ func TestAgentSelectsModelBeforeReleaseWork(t *testing.T) {
 		})
 	}
 }
+func TestAgentPersistsCancellationSource(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := DefaultConfig()
+	cfg.Directory, cfg.StateDirectory = t.TempDir(), t.TempDir()
+	cfg.Agent = AgentConfig{Command: []string{executable, "-test.run=^TestWirePeer$"}, Environment: map[string]string{"RELEASE_BOT_WIRE_PEER": "hang"}}
+	ctx, cancel := context.WithCancelCause(context.Background())
+	defer cancel(nil)
+	// Cancel only once the prompt is recorded, not after an arbitrary delay.
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	finished := make(chan error, 1)
+	go func() { _, err := (agentProcess{config: cfg, log: log}).Execute(ctx, "fixture"); finished <- err }()
+	deadline := time.After(5 * time.Second)
+	tick := time.NewTicker(5 * time.Millisecond)
+	defer tick.Stop()
+	var path string
+	waiting := true
+	for waiting {
+		select {
+		case <-deadline:
+			cancel(errors.New("test timed out waiting for prompt"))
+			<-finished
+			t.Fatal("agent never reached the prompt")
+		case <-tick.C:
+			files, _ := filepath.Glob(filepath.Join(cfg.StateDirectory, "sessions", "*.jsonl"))
+			if len(files) == 1 {
+				path = files[0]
+				data, _ := os.ReadFile(path)
+				waiting = !strings.Contains(string(data), `"prompt":"fixture"`)
+			}
+		}
+	}
+	cancel(errors.New("fixture received SIGTERM"))
+	if err := <-finished; !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected cancellation, got %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		var record map[string]any
+		if err := json.Unmarshal([]byte(line), &record); err != nil {
+			t.Fatal(err)
+		}
+		if record["event"] == "session_end" {
+			found = true
+			if record["phase"] != "session/prompt" || record["context_cause"] != "fixture received SIGTERM" || record["error"] != "context canceled" {
+				t.Fatalf("lost cancellation source: %+v", record)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("session has no termination record")
+	}
+}
+
 func TestWorkspaceCannotEscapeAndCancelledPermission(t *testing.T) {
 	dir := t.TempDir()
 	outside := t.TempDir()

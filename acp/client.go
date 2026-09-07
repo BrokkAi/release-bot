@@ -36,10 +36,18 @@ type Content struct {
 type Update struct {
 	SessionID string `json:"sessionId"`
 	Update    struct {
-		Kind      string          `json:"sessionUpdate"`
-		Content   json.RawMessage `json:"content"`
-		Title     string          `json:"title"`
-		MessageID string          `json:"messageId"`
+		Kind       string          `json:"sessionUpdate"`
+		Content    json.RawMessage `json:"content"`
+		Title      string          `json:"title"`
+		MessageID  string          `json:"messageId"`
+		ToolCallID string          `json:"toolCallId"`
+		Status     string          `json:"status"`
+		RawOutput  json.RawMessage `json:"rawOutput"`
+		Meta       struct {
+			TerminalOutput *struct {
+				Data string `json:"data"`
+			} `json:"terminal_output_delta"`
+		} `json:"_meta"`
 	} `json:"update"`
 }
 

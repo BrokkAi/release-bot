@@ -129,6 +129,8 @@ Readable progress goes to stderr; `--json` selects structured logs. Private JSON
 
 ## Development and protocol scope
 
+The live transcript is shown by default: agent messages and thought updates, tool output, completion/failure status, and agent stderr appear as they arrive. Text fragments are joined into readable lines. `--json` keeps these as structured stream events. Session transcripts also include a `session_end` record with the phase, error, context cancellation cause (when available), and transport failure, so a future interruption can be diagnosed from disk.
+
 This repository's [release instructions](RELEASING.md) describe its CI and release workflows. CI runs on pushes and pull requests; the release workflow builds Linux/macOS archives, checks publisher access, and verifies staged assets before publication.
 
 ```sh

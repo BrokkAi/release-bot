@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os/exec"
 	"path/filepath"
 	"sync"
@@ -65,8 +66,6 @@ func (h *workspaceHost) terminal(ctx context.Context, method string, raw json.Ra
 			env[v.Name] = v.Value
 		}
 		t := &commandTerminal{command: osrun.StartCommand(h.ctx, directory, append([]string{p.Command}, p.Args...), env), tail: osrun.Tail{Capacity: limit}, finished: make(chan struct{})}
-		t.command.Stdout = &t.tail
-		t.command.Stderr = &t.tail
 		h.mu.Lock()
 		defer h.mu.Unlock()
 		if h.closing || h.ctx.Err() != nil {
@@ -75,11 +74,13 @@ func (h *workspaceHost) terminal(ctx context.Context, method string, raw json.Ra
 		if len(h.terminals) >= 32 {
 			return nil, fmt.Errorf("release unused terminals before starting more")
 		}
+		h.next++
+		id := fmt.Sprintf("t%d", h.next)
+		t.command.Stdout = io.MultiWriter(&t.tail, &transcriptWriter{log: h.log, source: "Command output", id: id, record: h.record})
+		t.command.Stderr = t.command.Stdout
 		if err := t.command.Start(); err != nil {
 			return nil, err
 		}
-		h.next++
-		id := fmt.Sprintf("t%d", h.next)
 		h.terminals[id] = t
 		go func() {
 			_ = t.command.Wait()
