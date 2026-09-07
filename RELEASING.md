@@ -32,7 +32,9 @@ It creates or updates an **unpublished draft** using that actual token to verify
 write access. No personal access token or package-registry secret is required.
 Missing rights fail here; no release assets are uploaded to the draft in this mode.
 
-The draft is retained as preparation/recovery evidence. A public release or tag
+The empty draft is disposable: deleting it does not invalidate the successful
+workflow authorization check. The publishing job recreates it with its own
+credential and rechecks write access before uploading. A public release or tag
 for the same version must match the intended commit. A draft targeting another
 commit blocks; do not overwrite it automatically. Resolve the unused draft or
 choose a new version and repeat preflight. Never move a public tag.
@@ -74,12 +76,17 @@ python3 scripts/release_check.py version
 
 The authorization check finds the successful `Release` preflight run for the
 exact commit and tag, requires every job to have passed, verifies the publisher
-step used that run's `github.token`, and confirms the resulting private draft is
-targeted at the same commit. It does not treat this machine's `gh` login as the
-publisher. The version check rejects conflicting tags/releases and permits an
+step used that run's `github.token`. A remaining draft must target the same
+commit, but the draft need not still exist. The publishing job checks its actual
+credential again before uploads. An already-public release goes directly to
+verification without requiring another private draft or publishing permission.
+The checker does not treat this machine's `gh` login as the publisher. The version check rejects conflicting tags/releases and permits an
 exact matching draft or a complete immutable published release during recovery.
 After publication, `python3 scripts/release_check.py published` rebuilds the
-deterministic assets and compares every downloaded release asset byte-for-byte.
+assets, validates the downloads against their own published manifest and
+checksums, then compares every unpacked file and its permissions with the rebuild.
+Gzip encoding may differ across machines even when the archive contents are
+identical. Same-job staging checks still compare exact uploaded bytes.
 
 ## Recovery and local tooling
 

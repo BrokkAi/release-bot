@@ -215,30 +215,36 @@ func TestInterruptedBuildGateKeepsOnlyCompletedChecks(t *testing.T) {
 }
 
 func TestLostPublicationReceiptReconcilesWithoutAgentEvenAtAttemptLimit(t *testing.T) {
-	f := newFixture(t)
-	calls := 0
-	f.engine.agent = scriptedAgent(func(ctx context.Context, prompt string) (Result, error) {
-		calls++
-		if strings.HasPrefix(prompt, "# Publishability") {
-			return Result{Status: "ready", Plan: f.plan()}, nil
-		}
-		f.published(t, true)
-		return Result{}, errors.New("lost receipt")
-	})
-	if f.engine.cycle(context.Background(), false) == nil {
-		t.Fatal("fixture should fail")
-	}
-	s := fixtureState(t, f)
-	s.Job.Tries = f.engine.config.Attempts
-	if err := writeState(f.engine.config, s); err != nil {
-		t.Fatal(err)
-	}
-	f.engine.starting = true
-	if err := f.engine.cycle(context.Background(), false); err != nil {
-		t.Fatal(err)
-	}
-	if calls != 2 || fixtureState(t, f).Job != nil {
-		t.Fatal("lost receipt restarted an agent")
+	for _, phase := range []string{"publish", "validating", "preflight"} {
+		t.Run(phase, func(t *testing.T) {
+			f := newFixture(t)
+			calls := 0
+			f.engine.agent = scriptedAgent(func(ctx context.Context, prompt string) (Result, error) {
+				calls++
+				if strings.HasPrefix(prompt, "# Publishability") {
+					return Result{Status: "ready", Plan: f.plan()}, nil
+				}
+				f.published(t, true)
+				return Result{}, errors.New("lost receipt")
+			})
+			if f.engine.cycle(context.Background(), false) == nil {
+				t.Fatal("fixture should fail")
+			}
+			s := fixtureState(t, f)
+			s.Job.Tries = f.engine.config.Attempts
+			s.Job.Phase = phase
+			s.Job.NeedsPreparation = phase != "publish"
+			if err := writeState(f.engine.config, s); err != nil {
+				t.Fatal(err)
+			}
+			f.engine.starting = true
+			if err := f.engine.cycle(context.Background(), false); err != nil {
+				t.Fatal(err)
+			}
+			if calls != 2 || fixtureState(t, f).Job != nil {
+				t.Fatal("lost receipt restarted an agent")
+			}
+		})
 	}
 }
 

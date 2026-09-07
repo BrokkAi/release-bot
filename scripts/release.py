@@ -40,7 +40,7 @@ def archive_name(tag, target):
 
 
 def archive(path, files, timestamp):
-    # Fixed metadata makes retries of the same commit produce identical assets.
+    # Fixed tar metadata; gzip bytes can still differ across compressor versions.
     with path.open("wb") as output, gzip.GzipFile(filename="", fileobj=output, mode="wb", mtime=0) as compressed:
         with tarfile.open(fileobj=compressed, mode="w") as tar:
             for name, data in sorted(files.items()):
@@ -119,6 +119,19 @@ def verify_local(tag, directory, sha):
     return manifest
 
 
+def compare_contents(tag, expected, downloaded, sha):
+    """Verify each package's own checksums, then compare its actual payload."""
+    verify_local(tag, expected, sha)
+    verify_local(tag, downloaded, sha)
+    for target in TARGETS:
+        name = archive_name(tag, target)
+        with tarfile.open(expected / name, "r:gz") as local, tarfile.open(downloaded / name, "r:gz") as remote:
+            for member in local.getmembers():
+                other = remote.getmember(member.name)
+                if member.mode != other.mode or local.extractfile(member).read() != remote.extractfile(other).read():
+                    raise ValueError(f"published archive content mismatch: {name}/{member.name}")
+
+
 class GitHub:
     def __init__(self, repo):
         if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo):
@@ -178,6 +191,7 @@ class GitHub:
         return release
 
     def verify_assets(self, release, directory):
+        """Check an upload against the exact files staged by this publisher."""
         assets = self.pages(f"{self.base}/releases/{release['id']}/assets?per_page=100")
         expected = {p.name: p for p in directory.iterdir()}
         if len(assets) != len(expected) or {a["name"] for a in assets} != set(expected):
@@ -190,8 +204,28 @@ class GitHub:
             if digest(remote) != digest(local):
                 raise ValueError(f"GitHub asset checksum mismatch: {asset['name']}")
 
+    def verify_published_assets(self, release, directory, sha):
+        """Compare a rebuilt package without assuming identical gzip encoding."""
+        tag = release["tag_name"]
+        validate_tag(tag)
+        expected = {archive_name(tag, target) for target in TARGETS} | {"release.json", "checksums.txt"}
+        assets = self.pages(f"{self.base}/releases/{release['id']}/assets?per_page=100")
+        if len(assets) != len(expected) or {a["name"] for a in assets} != expected:
+            raise ValueError("GitHub release is missing assets or contains unexpected ones")
+        with tempfile.TemporaryDirectory() as temporary:
+            downloaded = Path(temporary)
+            for asset in assets:
+                if asset["state"] != "uploaded" or asset["size"] <= 0:
+                    raise ValueError(f"incomplete GitHub asset: {asset['name']}")
+                data = run("gh", "api", "-H", "Accept: application/octet-stream", f"{self.base}/releases/assets/{asset['id']}")
+                if len(data) != asset["size"]:
+                    raise ValueError(f"incomplete GitHub download: {asset['name']}")
+                (downloaded / asset["name"]).write_bytes(data)
+            compare_contents(tag, directory, downloaded, sha)
+
     def publish(self, release, directory, sha):
         tag = release["tag_name"]
+        staged_here = release["draft"]
         if release["draft"]:
             for path in sorted(directory.iterdir()):
                 run("gh", "release", "upload", tag, str(path), "--repo", self.repo, "--clobber")
@@ -202,7 +236,10 @@ class GitHub:
             release = self.api(f"{self.base}/releases/{release['id']}", {"draft": False, "make_latest": "false" if release["prerelease"] else "true"}, "PATCH")
         if release["draft"] or not release.get("published_at") or self.tag_commit(tag) != sha:
             raise ValueError("release is not published at the validated commit")
-        self.verify_assets(release, directory)
+        if staged_here:
+            self.verify_assets(release, directory)
+        else:
+            self.verify_published_assets(release, directory, sha)
         print(f"Verified published release: {release['html_url']}")
 
 

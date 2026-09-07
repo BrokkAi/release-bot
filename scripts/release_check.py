@@ -99,6 +99,19 @@ def selected_preflight_run(github, sha, tag):
 def authorization():
     sha, tag = context()
     github = release.GitHub(repository())
+    matches = matching_releases(github, tag)
+    tag_sha = github.tag_commit(tag)
+    if tag_sha is not None and tag_sha != sha:
+        raise ValueError("RELEASE_TAG already belongs to another commit")
+    if matches and not matches[0].get("draft"):
+        # Recovery is verification only; no new publishing permission is needed.
+        verify_published(github, matches[0], tag, sha)
+        print(f"{tag} is already published and verified; no publication write is needed")
+        return
+    if matches and matches[0].get("target_commitish") != sha:
+        raise ValueError("existing draft targets another commit")
+    if not matches and tag_sha is not None:
+        raise ValueError("RELEASE_TAG exists without a recoverable GitHub release")
     run = selected_preflight_run(github, sha, tag)
     jobs = github.api(f"{github.base}/actions/runs/{run['id']}/jobs?per_page=100").get("jobs", [])
     if not jobs or any(job.get("status") != "completed" or job.get("conclusion") != "success" for job in jobs):
@@ -109,10 +122,10 @@ def authorization():
     steps = [step for step in publisher[0].get("steps", []) if step.get("name") == PREFLIGHT_STEP]
     if len(steps) != 1 or steps[0].get("status") != "completed" or steps[0].get("conclusion") != "success":
         raise ValueError("the actual github.token publisher validation step did not pass")
-    matches = matching_releases(github, tag)
-    if len(matches) != 1 or not matches[0].get("draft") or matches[0].get("target_commitish") != sha:
-        raise ValueError("publisher validation did not leave one matching private draft")
-    print(f"Actions run {run['id']} proved github.token can write draft {matches[0]['id']} for {tag} at {sha}")
+    # The completed publishing-token check is the evidence, not the continued
+    # existence of its empty draft. The publishing job recreates a deleted draft
+    # and checks its own actual token again before uploading any assets.
+    print(f"Actions run {run['id']} passed publisher authorization for {tag} at {sha}; the draft is optional")
 
 
 def verify_published(github, release_record, tag, sha):
@@ -123,7 +136,7 @@ def verify_published(github, release_record, tag, sha):
     with tempfile.TemporaryDirectory() as temporary:
         directory = Path(temporary)
         release.package(tag, directory)
-        github.verify_assets(release_record, directory)
+        github.verify_published_assets(release_record, directory, sha)
 
 
 def version():
@@ -145,7 +158,7 @@ def version():
         print(f"{tag} is reserved by matching private draft {record['id']} for safe recovery")
         return
     verify_published(github, record, tag, sha)
-    print(f"{tag} is already published with byte-identical immutable assets")
+    print(f"{tag} is already published with verified checksums and matching archive contents")
 
 
 def published():
@@ -155,7 +168,7 @@ def published():
     if len(matches) != 1:
         raise ValueError("exactly one GitHub release must exist for RELEASE_TAG")
     verify_published(github, matches[0], tag, sha)
-    print(f"Verified the public {tag} tag and all six byte-identical GitHub release assets at {sha}")
+    print(f"Verified the public {tag} tag, all six asset checksums and matching archive contents at {sha}")
 
 
 def main():

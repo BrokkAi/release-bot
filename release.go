@@ -173,9 +173,10 @@ func (e *engine) resume(ctx context.Context, s *State) error {
 		e.log.Info("Resuming pending release on startup", "phase", j.Phase, "previous_error", j.Failure, "interruption", j.Interruption)
 	}
 	candidate := j.Candidate
-	if candidate == nil && j.Phase == "publish" && e.validatePlan(j.Plan) == nil {
+	if candidate == nil && e.validatePlan(j.Plan) == nil {
 		// Publication can finish before the agent delivers its receipt. Verify
-		// the saved plan before launching another agent or checking availability.
+		// the saved plan before launching another agent or checking availability,
+		// even if an earlier retry already moved back into validation/preparation.
 		candidate = &Result{Status: "released", Commit: j.Plan.Commit, Tag: j.Plan.Tag, Plan: j.Plan}
 		if e.config.GitHubRepo() != "" {
 			candidate.URL = "https://" + e.config.GitHub.Host + "/" + e.config.GitHubRepo() + "/releases/tag/" + url.PathEscape(j.Plan.Tag)
