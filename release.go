@@ -138,12 +138,17 @@ func (e *engine) cycle(ctx context.Context, force bool) error {
 	if err != nil {
 		return err
 	}
+	remoteHead, err := e.git.resolve(ctx, e.git.branchRef())
+	if err != nil {
+		return err
+	}
 	total, recent, err := e.git.changes(ctx, s.Released, head, now.Add(-time.Duration(e.config.BurstWindow)))
 	if err != nil {
 		return err
 	}
-	if s.Observed != head {
+	if s.Observed != head || s.ObservedRemote != remoteHead {
 		s.Observed = head
+		s.ObservedRemote = remoteHead
 		s.ChangedAt = now
 	}
 	if err := writeState(e.config, s); err != nil {
@@ -160,17 +165,17 @@ func (e *engine) cycle(ctx context.Context, force bool) error {
 	if err := e.git.advance(ctx); err != nil {
 		return err
 	}
-	remoteHead, err := e.git.resolve(ctx, e.git.branchRef())
+	workBranch, err := e.git.startBranch(ctx)
 	if err != nil {
 		return err
 	}
 	// Keep the remote baseline as the ancestry requirement: preparation may
 	// merge the local work through a PR using squash or rebase.
-	s.Job = &Job{Target: remoteHead, Started: now}
+	s.Job = &Job{Target: remoteHead, WorkBranch: workBranch, Started: now}
 	if err := writeState(e.config, s); err != nil {
 		return err
 	}
-	e.log.Info("release due", "reason", reason, "target", head)
+	e.log.Info("release due", "reason", reason, "target", head, "work_branch", workBranch)
 	return e.resume(ctx, s)
 }
 func (e *engine) resume(ctx context.Context, s *State) error {

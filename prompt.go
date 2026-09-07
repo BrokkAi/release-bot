@@ -20,12 +20,13 @@ func releasePrompt(cfg Config, state *State) string {
 	data, _ := json.MarshalIndent(struct {
 		Remote       string       `json:"remote"`
 		Branch       string       `json:"branch"`
+		Directory    string       `json:"workspace"`
 		Previous     string       `json:"previous_release_commit"`
 		Instructions []string     `json:"instruction_files"`
 		GitHubRepo   string       `json:"github_repo"`
 		GitHub       GitHubConfig `json:"github"`
 		Job          *Job         `json:"job"`
-	}{cfg.Remote, cfg.Branch, state.Released, cfg.InstructionFiles, cfg.GitHubRepo(), cfg.GitHub, state.Job}, "", "  ")
+	}{cfg.Remote, cfg.Branch, cfg.Directory, state.Released, cfg.InstructionFiles, cfg.GitHubRepo(), cfg.GitHub, state.Job}, "", "  ")
 	prompt := releaseSkill
 	if state.Job.Phase == "preflight" {
 		prompt = preflightSkill

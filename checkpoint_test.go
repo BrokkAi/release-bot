@@ -116,7 +116,7 @@ func TestChangedInputsInvalidateCheckpoints(t *testing.T) {
 			switch change {
 			case "commit":
 				localGit(t, f.engine.config.Directory, "commit", "--allow-empty", "-m", "changed inputs")
-				localGit(t, f.engine.config.Directory, "push", "origin", "master")
+				localGit(t, f.engine.config.Directory, "push", "origin", "HEAD:master")
 				f.head = localGit(t, f.engine.config.Directory, "rev-parse", "HEAD")
 			case "dirty tree":
 				writeTestFile(t, filepath.Join(f.engine.config.Directory, "manifest"), "modified")

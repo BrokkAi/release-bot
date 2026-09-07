@@ -20,6 +20,7 @@ type Result struct {
 }
 type Job struct {
 	Target           string           `json:"target"`
+	WorkBranch       string           `json:"work_branch,omitempty"`
 	Started          time.Time        `json:"started"`
 	Tries            int              `json:"tries"`
 	RetryAt          time.Time        `json:"retry_at"`
@@ -34,16 +35,17 @@ type Job struct {
 	NeedsPreparation bool             `json:"needs_preparation,omitempty"`
 }
 type State struct {
-	Format     int       `json:"format"`
-	Remote     string    `json:"remote"`
-	Branch     string    `json:"branch"`
-	Directory  string    `json:"directory"`
-	Released   string    `json:"released"`
-	ReleasedAt time.Time `json:"released_at"`
-	Observed   string    `json:"observed"`
-	ChangedAt  time.Time `json:"changed_at"`
-	Job        *Job      `json:"job,omitempty"`
-	LastResult *Result   `json:"last_result,omitempty"`
+	Format         int       `json:"format"`
+	Remote         string    `json:"remote"`
+	Branch         string    `json:"branch"`
+	Directory      string    `json:"directory"`
+	Released       string    `json:"released"`
+	ReleasedAt     time.Time `json:"released_at"`
+	Observed       string    `json:"observed"`
+	ObservedRemote string    `json:"observed_remote,omitempty"`
+	ChangedAt      time.Time `json:"changed_at"`
+	Job            *Job      `json:"job,omitempty"`
+	LastResult     *Result   `json:"last_result,omitempty"`
 }
 
 func ReadState(cfg Config) (*State, error) {

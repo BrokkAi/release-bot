@@ -108,7 +108,7 @@ func TestFirstReleaseCanPrepareInfrastructureBeforePublication(t *testing.T) {
 				writeTestFile(t, filepath.Join(dir, "RELEASING.md"), "Fixture release: validate manifest and publisher authorization, then upload to fixture registry.")
 				localGit(t, dir, "add", ".github/workflows/release.yml", "RELEASING.md")
 				localGit(t, dir, "commit", "-m", "set up fixture releases")
-				localGit(t, dir, "push", "origin", "master")
+				localGit(t, dir, "push", "origin", "HEAD:master")
 				f.head = localGit(t, dir, "rev-parse", "HEAD")
 			}
 			plan := f.plan()
