@@ -14,7 +14,7 @@ The command is **`brb`**. Choose one installation method; supported platforms ar
 go install github.com/BrokkAi/release-bot/cmd/brb@latest
 ```
 
-Go installs `brb` into `GOBIN`, or `$(go env GOPATH)/bin` by default. Add that directory to your `PATH`. Replace `@latest` with a release tag such as `@v0.1.0` to pin a version. See the [Go installation reference](https://go.dev/ref/mod#go-install). From a source checkout, use `go install ./cmd/brb`, or `make build` to produce `bin/brb`.
+Go installs `brb` into `GOBIN`, or `$(go env GOPATH)/bin` by default. Add that directory to your `PATH`. Replace `@latest` with a release tag such as `@v0.2.0` to pin a version. See the [Go installation reference](https://go.dev/ref/mod#go-install). From a source checkout, use `go install ./cmd/brb`, or `make build` to produce `bin/brb`.
 
 **curl** (prebuilt binary, no Go required):
 
@@ -26,28 +26,30 @@ export PATH="$HOME/.local/bin:$PATH"
 The installer downloads the latest stable GitHub release, verifies its SHA-256 checksum, and installs `brb` in `~/.local/bin`. Add the PATH line to your shell profile to keep it across sessions. Rerun to upgrade. To select a release and destination:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/BrokkAi/release-bot/master/install.sh | INSTALL_DIR="$HOME/.local/bin" sh -s -- v0.1.0
+curl -fsSL https://raw.githubusercontent.com/BrokkAi/release-bot/master/install.sh | INSTALL_DIR="$HOME/.local/bin" sh -s -- v0.2.0
 ```
 
-**npm** (Node.js 18 or newer):
+**npm** (Node.js 18 or newer; [published package](https://www.npmjs.com/package/@brokkai/release-bot)):
 
 ```sh
 npm install -g @brokkai/release-bot
 brb --help
 ```
 
-The npm package installs the matching native binary through an optional platform dependency. Keep optional dependencies enabled. For a one-off invocation, use `npx --yes @brokkai/release-bot --help`. Rerun the install command with `@latest` to upgrade, or append a version such as `@0.1.0` to pin it.
+The npm package installs the matching native binary through an optional platform dependency. Keep optional dependencies enabled. For a one-off invocation, use `npx --yes @brokkai/release-bot --help`. Rerun the install command with `@latest` to upgrade, or append a version such as `@0.2.0` to pin it.
 
-**uv** (Python 3.10 or newer):
+**uv** (Python 3.10 or newer; PyPI publication pending):
+
+Use Go, curl, or npm for now. Once the first PyPI release is published:
 
 ```sh
 uv tool install brokk-release-bot
 brb --help
 ```
 
-For a one-off invocation, use `uvx --from brokk-release-bot brb --help`. The Python package downloads its exact native release on first use and checks archive and binary hashes embedded in the package. Later launches use the verified cache under `$XDG_CACHE_HOME/brokk-release-bot` or `~/.cache/brokk-release-bot`; `BROKK_RELEASE_BOT_CACHE_DIR` overrides it. Use `uv tool upgrade brokk-release-bot` to upgrade, or install `brokk-release-bot==0.1.0` to pin it. Run `uv tool update-shell` if the tool directory is missing from your PATH.
+For a one-off invocation, use `uvx --from brokk-release-bot brb --help`. The Python package downloads its exact native release on first use and checks archive and binary hashes embedded in the package. Later launches use the verified cache under `$XDG_CACHE_HOME/brokk-release-bot` or `~/.cache/brokk-release-bot`; `BROKK_RELEASE_BOT_CACHE_DIR` overrides it. Use `uv tool upgrade brokk-release-bot` to upgrade, or install `brokk-release-bot==0.2.0` to pin it. Run `uv tool update-shell` if the tool directory is missing from your PATH.
 
-The curl installer requires a published GitHub release. npm and uv require the corresponding registry publication; see [RELEASING.md](RELEASING.md) for first-publication setup.
+Go, curl, and npm installation are available now. See [RELEASING.md](RELEASING.md) for release procedures, npm trusted publishing, and the remaining PyPI publisher setup.
 
 ## Run
 
