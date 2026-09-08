@@ -6,16 +6,21 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
 	"os/signal"
+	"runtime/debug"
 	"strings"
 	"syscall"
 	"time"
 
 	bot "github.com/BrokkAi/release-bot"
 )
+
+// version is replaced with the release tag when building published binaries.
+var version = "dev"
 
 func main() {
 	logger := slog.New(newConsole(os.Stderr))
@@ -46,6 +51,8 @@ func executeWithRun(ctx context.Context, args []string, logger *slog.Logger, run
 	mode := "run"
 	if len(args) > 0 {
 		switch args[0] {
+		case "version", "--version", "-v":
+			return versionCommand(args[1:], os.Stdout)
 		case "run", "once", "status", "retry":
 			mode = args[0]
 			args = args[1:]
@@ -53,7 +60,7 @@ func executeWithRun(ctx context.Context, args []string, logger *slog.Logger, run
 	}
 	flags := flag.NewFlagSet(mode, flag.ContinueOnError)
 	flags.Usage = func() {
-		fmt.Fprintln(flags.Output(), "Usage: brb [repository path or URL] [options]\n\nRun inside a repository to detect its remote and default branch and start working.\nNo configuration file is needed. Repository instructions and checks are discovered\nby the agent. Existing run, once, status and retry commands are also supported.\n\nOptions:")
+		fmt.Fprintln(flags.Output(), "Usage: brb [repository path or URL] [options]\n\nRun inside a repository to detect its remote and default branch and start working.\nNo configuration file is needed. Repository instructions and checks are discovered\nby the agent. Existing run, once, status, retry and version commands are also supported.\n\nOptions:")
 		flags.PrintDefaults()
 	}
 	file := flags.String("config", "", "optional JSON configuration for advanced settings")
@@ -198,6 +205,24 @@ func executeWithRun(ctx context.Context, args []string, logger *slog.Logger, run
 	}
 	logger.Info("Using managed workspace", "checkout", cfg.Directory, "state", cfg.StateDirectory)
 	return run(ctx, cfg, logger, *once, *force)
+}
+
+func versionCommand(args []string, output io.Writer) error {
+	if len(args) != 0 {
+		return errors.New("version does not accept arguments")
+	}
+	_, err := fmt.Fprintln(output, buildVersion())
+	return err
+}
+
+func buildVersion() string {
+	if version != "dev" {
+		return version
+	}
+	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
+		return info.Main.Version
+	}
+	return version
 }
 
 // Accept the repository before or after flags, as users expect from CLI tools.

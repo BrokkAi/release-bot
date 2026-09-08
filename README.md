@@ -74,9 +74,12 @@ brb --agent your-acp-agent --agent-arg=--stdio
 brb --model YOUR_MODEL_ID
 brb --model YOUR_MODEL_ID --effort low
 brb status
+brb version
 ```
 
 `--once` performs one scheduled check or recovery attempt and exits. It can publish a release. `--once --force` skips cadence checks but still requires new commits. `status` shows progress without launching an agent. `retry` resets the pending release's attempt budget and resumes work; stop an already-running daemon before using it. Existing `run` and `once` subcommands also work. Flags can appear before or after the repository argument. Use `--help` for options.
+
+`brb version` prints the embedded release tag. Local builds report `dev`; binaries installed with `go install ...@version` report the module version.
 
 The default workspace lives under `$XDG_STATE_HOME/release-bot` or `~/.local/state/release-bot`, with separate checkout/state directories keyed by remote and branch. New workspaces use a Git worktree backed by the bot's own bare repository at `state/repository.git`. Your checkout and other bots' worktrees do not share its index, local branches, tags or Git configuration. Existing managed clones continue working in place, including unfinished jobs.
 

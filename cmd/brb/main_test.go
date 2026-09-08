@@ -92,6 +92,23 @@ func TestHelpDoesNotNeedRepositoryAndConsoleIsReadable(t *testing.T) {
 	}
 }
 
+func TestVersionCommand(t *testing.T) {
+	original := version
+	version = "v1.2.3"
+	t.Cleanup(func() { version = original })
+
+	var output strings.Builder
+	if err := versionCommand(nil, &output); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := output.String(), "v1.2.3\n"; got != want {
+		t.Fatalf("version output = %q, want %q", got, want)
+	}
+	if err := versionCommand([]string{"extra"}, &output); err == nil {
+		t.Fatal("version accepted an argument")
+	}
+}
+
 func TestModelFlagAndConfiguration(t *testing.T) {
 	source := cliRepository(t)
 	cfg, err := bot.Discover(context.Background(), source, "")
