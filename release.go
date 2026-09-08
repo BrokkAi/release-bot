@@ -14,13 +14,17 @@ import (
 )
 
 type engine struct {
-	config   Config
-	git      checkout
-	github   github
-	agent    Agent
-	log      *slog.Logger
-	now      func() time.Time
-	starting bool
+	config             Config
+	git                checkout
+	github             github
+	agent              Agent
+	log                *slog.Logger
+	now                func() time.Time
+	starting           bool
+	observe            func(Progress)
+	state              *State
+	unreleased, recent int
+	changesKnown       bool
 }
 
 var errAttemptsExhausted = errors.New("release retry budget exhausted; fix the reported failure and run release-bot retry")
@@ -31,12 +35,16 @@ func Run(ctx context.Context, cfg Config, log *slog.Logger, once, force bool) er
 	if err := cfg.Validate(); err != nil {
 		return err
 	}
+	if log == nil {
+		log = slog.Default()
+	}
 	unlock, err := lockConfig(cfg)
 	if err != nil {
 		return err
 	}
 	defer unlock()
 	e := engine{config: cfg, git: checkout{cfg}, github: github{config: cfg}, agent: agentProcess{cfg, log}, log: log, now: time.Now, starting: true}
+	e.observe, _ = ctx.Value(progressKey{}).(func(Progress))
 	// Check immediately, including on restart; polling only delays later checks.
 	for {
 		if err := ctx.Err(); err != nil {
@@ -49,12 +57,18 @@ func Run(ctx context.Context, cfg Config, log *slog.Logger, once, force bool) er
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
+		if err != nil {
+			e.report(e.state, "paused", err.Error())
+		}
 		var setup *agentSetupError
 		if once || errors.As(err, &setup) || errors.Is(err, errAttemptsExhausted) {
 			return err
 		}
 		if err != nil {
 			log.Error("release cycle", "error", err)
+		}
+		if err == nil {
+			e.report(e.state, "waiting", "Waiting for the next release check")
 		}
 		timer := time.NewTimer(time.Duration(cfg.Poll))
 		select {
@@ -120,6 +134,9 @@ func (e *engine) cycle(ctx context.Context, force bool) error {
 	if err != nil {
 		return err
 	}
+	e.state = s
+	e.changesKnown = false
+	e.report(s, "fetching", "Checking repository for changes")
 	e.log.Info("Checking repository for changes")
 	if err := e.git.open(ctx); err != nil {
 		return err
@@ -130,6 +147,7 @@ func (e *engine) cycle(ctx context.Context, force bool) error {
 			return err
 		}
 	}
+	e.state = s
 	if s.Job != nil {
 		return e.resume(ctx, s)
 	}
@@ -146,12 +164,13 @@ func (e *engine) cycle(ctx context.Context, force bool) error {
 	if err != nil {
 		return err
 	}
+	e.unreleased, e.recent, e.changesKnown = total, recent, true
 	if s.Observed != head || s.ObservedRemote != remoteHead {
 		s.Observed = head
 		s.ObservedRemote = remoteHead
 		s.ChangedAt = now
 	}
-	if err := writeState(e.config, s); err != nil {
+	if err := e.save(s); err != nil {
 		return err
 	}
 	reason := due(e.config, s, total, recent, now)
@@ -159,9 +178,11 @@ func (e *engine) cycle(ctx context.Context, force bool) error {
 		reason = "forced cadence"
 	}
 	if reason == "" {
+		e.report(s, "waiting", "Waiting for release cadence or new commits")
 		e.log.Info("monitoring", "unreleased_commits", total, "recent_commits", recent)
 		return nil
 	}
+	e.report(s, "preparing", "Preparing release workspace: "+reason)
 	if err := e.git.advance(ctx); err != nil {
 		return err
 	}
@@ -172,7 +193,7 @@ func (e *engine) cycle(ctx context.Context, force bool) error {
 	// Keep the remote baseline as the ancestry requirement: preparation may
 	// merge the local work through a PR using squash or rebase.
 	s.Job = &Job{Target: remoteHead, WorkBranch: workBranch, Started: now}
-	if err := writeState(e.config, s); err != nil {
+	if err := e.save(s); err != nil {
 		return err
 	}
 	e.log.Info("release due", "reason", reason, "target", head, "work_branch", workBranch)
@@ -186,12 +207,13 @@ func (e *engine) resume(ctx context.Context, s *State) error {
 		j.Tries = max(0, j.Tries-1)
 		j.SetupFailure, j.Failure = j.Failure, ""
 		j.RetryAt = time.Time{}
-		if err := writeState(e.config, s); err != nil {
+		if err := e.save(s); err != nil {
 			return err
 		}
 		e.log.Info("Recovered attempt consumed by an invalid agent setting", "model", e.config.Agent.Model, "effort", e.config.Agent.Effort)
 	}
 	if e.now().Before(j.RetryAt) && !e.starting {
+		e.report(s, "waiting", "Release retry eligible after "+j.RetryAt.Local().Format("15:04:05"))
 		e.log.Info("retry scheduled", "at", j.RetryAt, "previous_error", j.Failure)
 		return nil
 	}
@@ -209,6 +231,7 @@ func (e *engine) resume(ctx context.Context, s *State) error {
 		}
 	}
 	if candidate != nil {
+		e.report(s, "reconciling", "Verifying previous publication: "+candidate.Tag)
 		e.log.Info("Reconciling previous publication", "tag", candidate.Tag)
 		if err := e.verify(ctx, j.Target, *candidate); err == nil {
 			return e.finish(s, *candidate)
@@ -225,9 +248,10 @@ func (e *engine) resume(ctx context.Context, s *State) error {
 	}
 	if j.Tries >= e.config.Attempts {
 		j.RetryAt = time.Time{}
-		if err := writeState(e.config, s); err != nil {
+		if err := e.save(s); err != nil {
 			return err
 		}
+		e.report(s, "blocked", j.Failure)
 		return fmt.Errorf("%w; last failure: %s", errAttemptsExhausted, j.Failure)
 	}
 	j.Tries++
@@ -235,18 +259,20 @@ func (e *engine) resume(ctx context.Context, s *State) error {
 	j.SetupFailure = ""
 	j.RetryAt = e.now().Add(time.Duration(e.config.RetryDelay))
 	// The target and consumed attempt are durable before any agent side effects.
-	if err := writeState(e.config, s); err != nil {
+	if err := e.save(s); err != nil {
 		return err
 	}
+	e.report(s, "attempt", "Starting release attempt")
 	r, err := e.publishAttempt(ctx, s)
 	if err == nil && (r.Status != "released" || r.Commit == "" || r.Tag == "") {
 		err = fmt.Errorf("agent has not released: %s", r.Detail)
 	}
 	if err == nil {
 		j.Candidate = &r
-		if err := writeState(e.config, s); err != nil {
+		if err := e.save(s); err != nil {
 			return err
 		}
+		e.report(s, "verifying", "Verifying published release: "+r.Tag)
 		err = e.verify(ctx, j.Target, r)
 		if err == nil {
 			return e.finish(s, r)
@@ -260,7 +286,7 @@ func (e *engine) resume(ctx context.Context, s *State) error {
 		j.Tries--
 		j.SetupFailure = err.Error()
 		j.RetryAt = time.Time{}
-		if saveErr := writeState(e.config, s); saveErr != nil {
+		if saveErr := e.save(s); saveErr != nil {
 			return saveErr
 		}
 		return err
@@ -271,7 +297,7 @@ func (e *engine) resume(ctx context.Context, s *State) error {
 	}
 	j.Failure = detail
 	j.RetryAt = e.now().Add(time.Duration(e.config.RetryDelay))
-	if saveErr := writeState(e.config, s); saveErr != nil {
+	if saveErr := e.save(s); saveErr != nil {
 		return saveErr
 	}
 	attemptErr := fmt.Errorf("release attempt %d/%d: %w", j.Tries, e.config.Attempts, err)
@@ -299,7 +325,7 @@ func (e *engine) interrupted(ctx context.Context, s *State, refund bool) error {
 	}
 	s.Job.Interruption = context.Cause(ctx).Error()
 	s.Job.RetryAt = time.Time{}
-	if err := writeState(e.config, s); err != nil {
+	if err := e.save(s); err != nil {
 		return err
 	}
 	e.log.Info("Release interrupted; saved for immediate resume", "reason", s.Job.Interruption, "phase", s.Job.Phase)
@@ -350,9 +376,11 @@ func (e *engine) finish(s *State, r Result) error {
 	s.ReleasedAt = e.now().UTC()
 	s.LastResult = &r
 	s.Job = nil
-	if err := writeState(e.config, s); err != nil {
+	if err := e.save(s); err != nil {
 		return err
 	}
+	e.changesKnown = false
+	e.report(s, "complete", "Release verified: "+r.Tag)
 	e.log.Info("release verified", "tag", r.Tag, "commit", r.Commit, "url", r.URL)
 	return nil
 }

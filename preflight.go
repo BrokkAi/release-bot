@@ -86,9 +86,10 @@ func (e *engine) publishAttempt(ctx context.Context, s *State) (Result, error) {
 		job.NeedsPreparation = true
 		job.ValidatedAt = time.Time{}
 		// Preserve the prior plan and failure as focused repair context.
-		if err := writeState(e.config, s); err != nil {
+		if err := e.save(s); err != nil {
 			return Result{}, err
 		}
+		e.report(s, "preparing", "Preparing release and publication plan")
 		prepared, err := e.agent.Execute(ctx, releasePrompt(e.config, s))
 		if err != nil {
 			return Result{}, fmt.Errorf("preflight agent: %w", err)
@@ -106,13 +107,14 @@ func (e *engine) publishAttempt(ctx context.Context, s *State) (Result, error) {
 	}
 	s.Job.Phase = "validating"
 	job.ValidatedAt = time.Time{}
-	if err := writeState(e.config, s); err != nil {
+	if err := e.save(s); err != nil {
 		return Result{}, err
 	}
+	e.report(s, "validating", "Checking publication prerequisites")
 	if err := e.validatePublicationCheckpoint(ctx, s); err != nil {
 		if ctx.Err() == nil {
 			job.NeedsPreparation = true
-			if saveErr := writeState(e.config, s); saveErr != nil {
+			if saveErr := e.save(s); saveErr != nil {
 				return Result{}, saveErr
 			}
 		}
@@ -120,15 +122,16 @@ func (e *engine) publishAttempt(ctx context.Context, s *State) (Result, error) {
 	}
 	s.Job.Phase = "publish"
 	job.ValidatedAt = e.now().UTC()
-	if err := writeState(e.config, s); err != nil {
+	if err := e.save(s); err != nil {
 		return Result{}, err
 	}
 	e.log.Info("publishability verified", "commit", job.Plan.Commit, "tag", job.Plan.Tag, "destinations", len(job.Plan.Destinations))
+	e.report(s, "publishing", "Publishing validated release: "+job.Plan.Tag)
 	result, err := e.agent.Execute(ctx, releasePrompt(e.config, s))
 	var blocked *blockedResultError
 	if errors.As(err, &blocked) || (err == nil && result.Status != "released") {
 		job.NeedsPreparation = true
-		if saveErr := writeState(e.config, s); saveErr != nil {
+		if saveErr := e.save(s); saveErr != nil {
 			return Result{}, saveErr
 		}
 	}
@@ -137,7 +140,7 @@ func (e *engine) publishAttempt(ctx context.Context, s *State) (Result, error) {
 	}
 	if result.Commit != job.Plan.Commit || result.Tag != job.Plan.Tag {
 		job.NeedsPreparation = true
-		if err := writeState(e.config, s); err != nil {
+		if err := e.save(s); err != nil {
 			return Result{}, err
 		}
 		return Result{}, errors.New("publication differs from the validated commit/tag; a new preflight is required")
@@ -199,6 +202,9 @@ func (e *engine) validatePublicationChecks(ctx context.Context, target string, p
 				e.log.Info("Reusing successful build check", "destination", destination.Name, "commit", plan.Commit)
 				continue
 			}
+			if state != nil {
+				e.report(state, "validating", destination.Name+": "+check.Kind)
+			}
 			e.log.Info("checking publishability", "destination", destination.Name, "check", check.Kind, "environment", destination.Environment)
 			if _, err := osrun.Run(ctx, e.config.Directory, env, check.Command...); err != nil {
 				return fmt.Errorf("%s %s: %w", destination.Name, check.Kind, err)
@@ -214,7 +220,7 @@ func (e *engine) validatePublicationChecks(ctx context.Context, target string, p
 					state.Job.BuildChecks = make(map[string]bool)
 				}
 				state.Job.BuildChecks[key] = true
-				if err := writeState(e.config, state); err != nil {
+				if err := e.save(state); err != nil {
 					return err
 				}
 			}

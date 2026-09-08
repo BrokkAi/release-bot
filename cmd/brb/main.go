@@ -17,27 +17,16 @@ import (
 	"time"
 
 	bot "github.com/BrokkAi/release-bot"
+	"golang.org/x/term"
 )
 
 // version is replaced with the release tag when building published binaries.
 var version = "dev"
 
 func main() {
-	logger := slog.New(newConsole(os.Stderr))
-	for _, arg := range os.Args[1:] {
-		if arg == "--json" || arg == "-json" || arg == "--json=true" || arg == "-json=true" {
-			logger = slog.New(slog.NewJSONHandler(os.Stderr, nil))
-		}
-	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	err := execute(ctx, os.Args[1:], logger)
-	if ctx.Err() != nil {
-		logger.Info("Stopped", "reason", context.Cause(ctx))
-		return
-	}
-	if err != nil {
-		logger.Error("stopped", "error", err)
+	if err := execute(ctx, os.Args[1:], nil); err != nil && ctx.Err() == nil && !errors.Is(err, context.Canceled) {
 		os.Exit(1)
 	}
 }
@@ -47,7 +36,16 @@ func execute(ctx context.Context, args []string, logger *slog.Logger) error {
 
 type runFunc func(context.Context, bot.Config, *slog.Logger, bool, bool) error
 
-func executeWithRun(ctx context.Context, args []string, logger *slog.Logger, run runFunc) error {
+func executeWithRun(ctx context.Context, args []string, logger *slog.Logger, run runFunc) (result error) {
+	ownOutput := logger == nil
+	if ownOutput {
+		logger = slog.New(newConsole(os.Stderr))
+		defer func() {
+			if result != nil && ctx.Err() == nil && !errors.Is(result, context.Canceled) {
+				logger.Error("Stopped", "error", result)
+			}
+		}()
+	}
 	mode := "run"
 	if len(args) > 0 {
 		switch args[0] {
@@ -68,6 +66,7 @@ func executeWithRun(ctx context.Context, args []string, logger *slog.Logger, run
 	selectedAgent := flags.String("agent", "", "ACP agent executable (default: Codex)")
 	model := flags.String("model", "", "model ID to use (default: agent's configured model)")
 	effort := flags.String("effort", "", "reasoning effort to use, such as low, medium or high (default: agent's configured effort)")
+	plain := flags.Bool("plain", false, "scrolling console output (disables the dashboard)")
 	defaults := bot.DefaultConfig()
 	burst := flags.Int("burst", defaults.Burst, "unreleased commits within the burst window to trigger an early release; 0 disables (overrides config; minimum gap and quiet period still apply)")
 	minimumGap := flags.Duration("minimum-gap", time.Duration(defaults.MinimumGap), "minimum time since the last release before an early release, e.g. 10m; 0 disables the gap (overrides config)")
@@ -82,6 +81,12 @@ func executeWithRun(ctx context.Context, args []string, logger *slog.Logger, run
 			return nil
 		}
 		return err
+	}
+	if ownOutput && *jsonOutput {
+		logger = slog.New(slog.NewJSONHandler(os.Stderr, nil))
+	}
+	if *plain && *jsonOutput {
+		return errors.New("--plain and --json cannot be used together")
 	}
 	if flags.NArg() > 1 {
 		return errors.New("pass one repository path or URL")
@@ -197,6 +202,9 @@ func executeWithRun(ctx context.Context, args []string, logger *slog.Logger, run
 		if _, err := exec.LookPath("gh"); err != nil {
 			return errors.New("GitHub CLI is required for this repository; install gh and run gh auth login")
 		}
+	}
+	if ownOutput && dashboardEnabled(*plain, *jsonOutput, term.IsTerminal(int(os.Stdin.Fd())), term.IsTerminal(int(os.Stderr.Fd())), os.Getenv("TERM")) {
+		return runDashboard(ctx, cfg, *once, *force, run, os.Stdin, os.Stderr)
 	}
 	logger.Info("Watching repository", "repository", cfg.Remote, "branch", cfg.Branch)
 	logger.Info("Using agent", "command", strings.Join(cfg.Agent.Command, " "))

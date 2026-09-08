@@ -87,6 +87,45 @@ Each new release starts on a unique `brb/release-...` branch. The preparation ag
 
 You can leave `brb` running in the background while other bots work. Restarting reuses the workspace and pending PR/job, including unfinished edits. The checkout and state directories are locked against duplicate local daemons, and the OS releases locks after crashes. Run only one release bot per remote/branch across machines; there is no distributed lock. A manually configured directory must be a standalone clone or this bot's private worktree, not a linked worktree sharing another repository's Git metadata.
 
+## Terminal dashboard
+
+Interactive runs show the same live dashboard as bug-bot. It fits the current
+terminal or tmux pane and adjusts when resized. Each pane runs one repository.
+
+```sh
+brb /path/to/repo           # live dashboard
+brb /path/to/repo --plain   # scrolling logs and agent transcript
+brb /path/to/repo --json    # structured logs
+```
+
+The overview shows the repository, branch and commit, preparation/validation/
+publication/verification stage, active tool, uptime, attempt budget, and next
+poll countdown. Larger panes also show model, reasoning effort, and unreleased
+and recent commit counts from the latest cadence check.
+
+The release browser shows the last verified receipt and the pending job. Details
+include the prepared commit and tag, destinations, validation evidence,
+workflows, attempt budget, failures, retry eligibility, and publication link.
+A receipt remains pending until independent verification succeeds. Run counters
+track releases verified during this invocation, attempts, agent starts, tools,
+and error log events; they are not lifetime release totals.
+
+- `1`, `2`, `3` or `Tab`: switch overview, releases, and activity.
+- `↑` / `↓` or `k` / `j`: browse results or scroll activity.
+- `Enter`: inspect the selected result. `Esc`: return to the list.
+- `Page Up` / `Page Down`: scroll details. `g` / `G`: jump to start/end;
+  `G` resumes following live activity.
+- `q` or `Ctrl+C`: stop the bot and its agent, save progress, and restore the terminal.
+
+Activity keeps recent output; full agent transcripts remain in the state
+directory. On exit, a summary and changed result links stay in the terminal.
+`once` exits when its check or attempt finishes.
+
+Piped input, redirected stderr, and `TERM=dumb` automatically use scrolling
+output. `--plain` and `--json` disable the dashboard and are mutually exclusive.
+`NO_COLOR` disables colors. `status`, `version`, and help retain their existing
+output and never open the dashboard.
+
 ## Runtime requirements and optional configuration
 
 Runtime requirements are Linux/macOS, Git, Codex (or another authenticated ACP agent), and `gh` for GitHub repositories. Existing agent, Git and registry credentials are used. If `codex-acp` is installed, the bot uses it. Otherwise it automatically launches the maintained [Codex ACP adapter](https://github.com/agentclientprotocol/codex-acp) through `npx --yes @agentclientprotocol/codex-acp`; Node.js must be installed and the first launch may download the adapter.
