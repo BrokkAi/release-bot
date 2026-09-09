@@ -253,8 +253,6 @@ The ACP implementation includes newline JSON-RPC framing, bidirectional requests
 
 Tests use in-memory protocol peers, real subprocess pipes, temporary Git remotes and simulated registry checks. They cover permission failures, incomplete plans, partial publication, recovery, concurrent commits, scheduling, locking, path confinement and cancellation. They do not exercise real Codex credentials or publish to live registries.
 
-Licensed under [Apache License 2.0](LICENSE). The license text was obtained unmodified from the Apache Software Foundation's license endpoint.
-
 ## Automatic releases of this project
 
 Pushing a new version tag starts the complete **Publish packages** workflow:
@@ -267,3 +265,15 @@ release gates. Successful npm uploads do not wait for the public version index o
 run immediate public-install checks. Manual package dispatch and the explicit
 registry verification command remain available for recovery and later checks.
 See [RELEASING.md](RELEASING.md).
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) and our
+[Code of Conduct](CODE_OF_CONDUCT.md). Report vulnerabilities privately using
+[SECURITY.md](SECURITY.md).
+
+## License
+
+Licensed under [Apache-2.0](LICENSE). See [NOTICE](NOTICE) for project
+attribution and [licenses/README.md](licenses/README.md) for dependency terms,
+third-party notices, and the license review process.

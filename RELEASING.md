@@ -2,7 +2,8 @@
 
 This repository publishes a GitHub release containing four archives: Linux and
 macOS, each for amd64 and arm64. Every archive contains `brb`, the Apache
-2.0 `LICENSE`, `README.md`, and `BUILD.json` identifying its exact commit, version,
+2.0 `LICENSE`, `NOTICE`, `licenses/THIRD_PARTY_NOTICES.txt`, `README.md`,
+and `BUILD.json` identifying its exact commit, version,
 and platform. Archives are named `brokk-release-bot-TAG-OS-ARCH.tar.gz`;
 `checksums.txt` and `release.json` accompany them. The same binaries are distributed
 through npm as `@brokkai/release-bot` and through the PyPI launcher
@@ -229,3 +230,13 @@ Use an empty output directory for packaging. Local packaging and `verify` make
 no GitHub writes. `preflight` and `publish` additionally require `GH_REPO` and an
 authenticated `gh` environment. The bot must use evidence from the actual Actions
 publishing job; a successful invocation with a developer's token is insufficient.
+
+## License validation
+
+Before committing release preparation, run `python3 scripts/licenses.py`.
+For dependency or Go version changes, follow [licenses/README.md](licenses/README.md)
+to review the policy and regenerate notices. Native packaging repeats this
+check and includes the exact project license, notice, and dependency report.
+Every npm package retains these files from the verified native assets. The
+package smoke test inspects their bytes as well as exercising installation.
+Python wheel and source distributions carry the same legal files.

@@ -21,7 +21,7 @@ class ReleaseAssets(unittest.TestCase):
             name = release.archive_name(self.tag, target)
             path = self.directory / name
             release.archive(path, {
-                "brb": b"fixture executable", "LICENSE": b"fixture license", "README.md": b"fixture readme",
+                "brb": b"fixture executable", **release.licenses.legal_files(), "README.md": b"fixture readme",
                 "BUILD.json": json.dumps({"tag": self.tag, "commit": self.sha, "target": target}).encode(),
             }, 100)
             self.manifest["assets"].append({"name": name, "size": path.stat().st_size, "sha256": release.digest(path.read_bytes())})
@@ -138,7 +138,7 @@ class ReleaseAssets(unittest.TestCase):
                 github.verify_assets({"id": 1}, self.directory)
 
     def test_rebuilt_contents_must_match_even_with_self_consistent_checksums(self):
-        for member in ("brb", "README.md", "LICENSE", "BUILD.json"):
+        for member in ("brb", "README.md", "BUILD.json", *release.licenses.LEGAL_FILES):
             with self.subTest(member=member):
                 remote = self.remote_package()
                 path = remote / release.archive_name(self.tag, release.TARGETS[0])
@@ -152,7 +152,7 @@ class ReleaseAssets(unittest.TestCase):
                     files[member] += b"changed"
                 release.archive(path, files, 100)
                 self.refresh_remote_manifest(remote)
-                with self.assertRaisesRegex(ValueError, "content mismatch|build metadata"):
+                with self.assertRaisesRegex(ValueError, "content mismatch|build metadata|archive legal file"):
                     release.compare_contents(self.tag, self.directory, remote, self.sha)
 
     def test_published_download_rejects_corruption_missing_files_and_unsafe_names(self):

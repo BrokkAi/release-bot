@@ -30,7 +30,7 @@ class Installers(unittest.TestCase):
         for target in release.TARGETS:
             name = release.archive_name(self.tag, target)
             release.archive(self.assets / name, {
-                "brb": self.binary, "LICENSE": b"fixture license", "README.md": b"fixture readme",
+                "brb": self.binary, **release.licenses.legal_files(), "README.md": b"fixture readme",
                 "BUILD.json": json.dumps({"tag": self.tag, "commit": self.sha, "target": target}).encode(),
             }, 100)
             data = (self.assets / name).read_bytes()

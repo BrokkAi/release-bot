@@ -12,6 +12,8 @@ import subprocess
 import tarfile
 import tempfile
 
+import licenses
+
 import release
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -64,6 +66,7 @@ def package(tag, assets, output, sha):
             ], cwd=directory)
             info = json.loads(result)[0]
             tarball = npm_output / info["filename"]
+            licenses.check_npm(tarball)
             packages.append({"name": name, "version": npm_version, "filename": tarball.name,
                              "sha256": release.digest(tarball.read_bytes()), "integrity": info["integrity"]})
 
@@ -72,30 +75,33 @@ def package(tag, assets, output, sha):
             name = release.archive_name(tag, target)
             asset = next(item for item in manifest["assets"] if item["name"] == name)
             with tarfile.open(assets / name, "r:gz") as bundle:
-                files = {member: bundle.extractfile(member).read() for member in ("brb", "LICENSE", "README.md", "BUILD.json")}
+                files = {member: bundle.extractfile(member).read() for member in ("brb", "README.md", "BUILD.json", *licenses.LEGAL_FILES)}
             metadata["targets"][target] = dict(asset, binary_sha256=hashlib.sha256(files["brb"]).hexdigest())
             system, go_arch = target.split("-")
             arch = {"amd64": "x64", "arm64": "arm64"}[go_arch]
             package_name = f"{NPM_ROOT}-{system}-{arch}"
             dependencies[package_name] = npm_version
             npm_pack(package_name, {"os": [system], "cpu": [arch], "description": f"Brokk Release Bot native binary for {system}/{arch}"},
-                     {"bin/brb": files["brb"], "LICENSE": files["LICENSE"], "README.md": files["README.md"], "BUILD.json": files["BUILD.json"]})
+                     {"bin/brb": files["brb"], **{name: files[name] for name in licenses.LEGAL_FILES}, "README.md": files["README.md"], "BUILD.json": files["BUILD.json"]})
         npm_pack(NPM_ROOT, {
             "description": "Brokk Release Bot: autonomous releases through Agent Client Protocol",
             "bin": {"brb": "bin/brb.cjs"}, "engines": {"node": ">=18"},
             "os": ["linux", "darwin"], "cpu": ["x64", "arm64"], "optionalDependencies": dependencies,
-        }, {"bin/brb.cjs": (ROOT / "npm/brb.cjs").read_bytes(), "LICENSE": files["LICENSE"], "README.md": files["README.md"]})
+        }, {"bin/brb.cjs": (ROOT / "npm/brb.cjs").read_bytes(), **{name: files[name] for name in licenses.LEGAL_FILES}, "README.md": files["README.md"]})
         write_json(npm_output / "manifest.json", {"tag": tag, "commit": sha, "packages": packages})
 
         python = staging / "python"
         shutil.copytree(ROOT / "python", python, ignore=shutil.ignore_patterns("__pycache__"))
         project = python / "pyproject.toml"
         project.write_text(project.read_text().replace('version = "0.0.0"', f'version = "{python_version}"'))
-        for filename in ("LICENSE", "README.md"):
-            (python / filename).write_bytes(files[filename])
+        for filename in ("README.md", *licenses.LEGAL_FILES):
+            path = python / filename
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(files[filename])
         write_json(python / "brokk_release_bot/release.json", metadata)
         subprocess.run(["uv", "build", "--out-dir", str(python_output.resolve()), str(python)], check=True,
                        env=dict(os.environ, SOURCE_DATE_EPOCH="315532800"))
+        licenses.check_python(python_output)
     print(f"Built {len(packages)} npm packages and Python distributions for {tag} at {sha}")
 
 
