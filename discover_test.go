@@ -26,6 +26,10 @@ func discoveryRepo(t *testing.T) (string, string) {
 }
 func TestDiscoveryDefaultsAndPersistentWorkspace(t *testing.T) {
 	source, remote := discoveryRepo(t)
+	expectedRemote, err := canonical(remote)
+	if err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	nested := filepath.Join(source, "nested")
 	if err := os.Mkdir(nested, 0700); err != nil {
@@ -36,7 +40,7 @@ func TestDiscoveryDefaultsAndPersistentWorkspace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Remote != remote || cfg.Branch != "main" {
+	if cfg.Remote != expectedRemote || cfg.Branch != "main" {
 		t.Fatalf("should watch remote main, not current feature branch: %+v", cfg)
 	}
 	if strings.HasPrefix(cfg.Directory, source+string(os.PathSeparator)) {

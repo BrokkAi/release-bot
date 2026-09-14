@@ -80,7 +80,15 @@ func (g checkout) open(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if root != g.config.Directory {
+	root, err = canonical(root)
+	if err != nil {
+		return err
+	}
+	directory, err := canonical(g.config.Directory)
+	if err != nil {
+		return err
+	}
+	if root != directory {
 		return fmt.Errorf("directory must be the root of its own checkout: %s", root)
 	}
 	common, err := g.git(ctx, "rev-parse", "--path-format=absolute", "--git-common-dir")
@@ -91,9 +99,13 @@ func (g checkout) open(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	repository, err := canonical(g.repositoryDirectory())
+	if err != nil {
+		return err
+	}
 	// Keep existing standalone clones, including pending jobs, in place. Reject
 	// linked worktrees that would let the agent mutate another bot's Git state.
-	if common != filepath.Join(g.config.Directory, ".git") && common != g.repositoryDirectory() {
+	if common != filepath.Join(directory, ".git") && common != repository {
 		return errors.New("checkout shares Git metadata outside this bot's workspace; use a separate managed directory")
 	}
 	remote, err := g.git(ctx, "remote", "get-url", "origin")
