@@ -277,3 +277,25 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) and our
 Licensed under [Apache-2.0](LICENSE). See [NOTICE](NOTICE) for project
 attribution and [licenses/README.md](licenses/README.md) for dependency terms,
 third-party notices, and the license review process.
+
+## Brokk Town worker service
+
+`brb worker --socket PATH` serves one-shot release check operations to Brokk
+Town over a private Unix-domain socket. The socket is mode `0600`; the endpoint is
+private to the local service, and the process exits after Town requests shutdown.
+
+Worker protocol v1 uses standard-library HTTP with JSON messages:
+
+- `GET /v1/initialize` returns the protocol range, bot identity, release version,
+  and capabilities. Town requires `release` as well as common `run` and
+  `progress` capabilities.
+- `POST /v1/runs` accepts one strict JSON task and responds with contiguous
+  newline-delimited JSON events: `progress`, optional typed `result`,
+  and `error`, `canceled`, or `complete`.
+- `POST /v1/shutdown` asks the service to stop after the current stream.
+
+Version and capability negotiation happen before work starts. Town does not read
+this bot's private state files; issue and review outcomes are explicit protocol
+results when applicable, while GitHub remains the durable source for receipts.
+The schemas are independent of the Unix HTTP transport, allowing an authenticated
+TLS transport to be added later without changing worker semantics.
