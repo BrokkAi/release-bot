@@ -193,6 +193,16 @@ class ReleaseAssets(unittest.TestCase):
             with self.assertRaises(PermissionError):
                 github.prepare(self.tag, self.sha)
 
+    def test_draft_untagged_alias_is_corrected_before_staging(self):
+        github = release.GitHub("fixture/repo")
+        malformed = {"id": 7, "tag_name": "untagged-fixture", "name": self.tag, "draft": True, "target_commitish": self.sha}
+        corrected = dict(malformed, tag_name=self.tag)
+        with patch.object(github, "tag_commit", return_value=None), patch.object(github, "pages", return_value=[]), patch.object(github, "api", side_effect=[malformed, corrected]) as api:
+            self.assertEqual(github.prepare(self.tag, self.sha), corrected)
+            self.assertEqual(api.call_args_list[0].args[2], "POST")
+            self.assertEqual(api.call_args_list[1].args[1], {"tag_name": self.tag, "name": self.tag})
+            self.assertEqual(api.call_args_list[1].args[2], "PATCH")
+
 
 if __name__ == "__main__":
     unittest.main()

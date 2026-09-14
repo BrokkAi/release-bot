@@ -194,8 +194,17 @@ class GitHub:
             "tag_name": tag, "target_commitish": sha, "name": tag,
             "draft": True, "prerelease": "-" in tag, "generate_release_notes": True,
         }, "POST")
+        if release["draft"] and release["tag_name"] != tag:
+            # GitHub occasionally returns an untagged-* alias for a draft when the
+            # pushed tag is still propagating. Correct the record before staging
+            # assets; otherwise the package job cannot find the release by tag.
+            release = self.api(f"{self.base}/releases/{release['id']}", {
+                "tag_name": tag, "name": tag,
+            }, "PATCH")
         if not release["draft"] or release["target_commitish"] != sha:
             raise ValueError("GitHub did not create the requested private draft")
+        if release["tag_name"] != tag:
+            raise ValueError("GitHub did not create the requested release tag")
         return release
 
     def verify_assets(self, release, directory):
