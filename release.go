@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"reflect"
 	"strings"
 	"time"
 
@@ -220,17 +221,24 @@ func (e *engine) resume(ctx context.Context, s *State) error {
 	if e.starting {
 		e.log.Info("Resuming pending release on startup", "phase", j.Phase, "previous_error", j.Failure, "interruption", j.Interruption)
 	}
-	candidate := j.Candidate
-	if candidate == nil && e.validatePlan(j.Plan) == nil {
+	var candidates []*Result
+	if j.Candidate != nil {
+		candidates = append(candidates, j.Candidate)
+	}
+	if e.validatePlan(j.Plan) == nil && (j.Candidate == nil ||
+		j.Candidate.Commit != j.Plan.Commit || j.Candidate.Tag != j.Plan.Tag ||
+		!reflect.DeepEqual(j.Candidate.Plan, j.Plan)) {
 		// Publication can finish before the agent delivers its receipt. Verify
 		// the saved plan before launching another agent or checking availability,
-		// even if an earlier retry already moved back into validation/preparation.
-		candidate = &Result{Status: "released", Commit: j.Plan.Commit, Tag: j.Plan.Tag, Plan: j.Plan}
+		// even if an earlier retry moved back into preparation or left a receipt
+		// for an older plan. Avoid repeating verification of an identical plan.
+		candidate := &Result{Status: "released", Commit: j.Plan.Commit, Tag: j.Plan.Tag, Plan: j.Plan}
 		if e.config.GitHubRepo() != "" {
 			candidate.URL = "https://" + e.config.GitHub.Host + "/" + e.config.GitHubRepo() + "/releases/tag/" + url.PathEscape(j.Plan.Tag)
 		}
+		candidates = append(candidates, candidate)
 	}
-	if candidate != nil {
+	for _, candidate := range candidates {
 		e.report(s, "reconciling", "Verifying previous publication: "+candidate.Tag)
 		e.log.Info("Reconciling previous publication", "tag", candidate.Tag)
 		if err := e.verify(ctx, j.Target, *candidate); err == nil {
@@ -241,7 +249,7 @@ func (e *engine) resume(ctx context.Context, s *State) error {
 			}
 			// A speculative receipt may simply have no remote tag yet. Keep
 			// the publisher's actionable failure for the preparation agent.
-			if j.Candidate != nil || j.Failure == "" {
+			if candidate == j.Candidate || j.Failure == "" {
 				j.Failure = err.Error()
 			}
 		}
