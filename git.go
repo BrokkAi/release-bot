@@ -17,6 +17,56 @@ import (
 
 type checkout struct{ config Config }
 
+// withVerificationTree never changes the preparation checkout's HEAD, index or
+// files. Only the temporary worktree created here is removed, including outputs
+// left by failed verification commands.
+func (g checkout) withVerificationTree(ctx context.Context, commit string, verify func(checkout) error) (err error) {
+	root, err := os.MkdirTemp(g.config.StateDirectory, "verification-")
+	if err != nil {
+		return err
+	}
+	directory := filepath.Join(root, "checkout")
+	defer func() {
+		// Cancellation must not strand a registered worktree on every retry.
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer cancel()
+		if _, statErr := os.Stat(filepath.Join(directory, ".git")); statErr == nil {
+			if _, cleanupErr := g.git(cleanupCtx, "worktree", "remove", "--force", directory); cleanupErr != nil {
+				err = errors.Join(err, fmt.Errorf("remove verification tree: %w", cleanupErr))
+				return
+			}
+		}
+		err = errors.Join(err, os.RemoveAll(root))
+	}()
+	if _, err := g.git(ctx, "worktree", "add", "--detach", directory, commit); err != nil {
+		return fmt.Errorf("create verification tree: %w", err)
+	}
+	tree := g
+	tree.config.Directory = directory
+	if _, err := tree.git(ctx, "submodule", "update", "--init", "--recursive"); err != nil {
+		return fmt.Errorf("initialize verification submodules: %w", err)
+	}
+	return verify(tree)
+}
+
+func (g checkout) checkVerificationTree(ctx context.Context, commit string) error {
+	head, err := g.resolve(ctx, "HEAD")
+	if err != nil {
+		return err
+	}
+	if head != commit {
+		return errors.New("verification tree changed from the released commit")
+	}
+	status, err := g.git(ctx, "status", "--porcelain", "--untracked-files=all")
+	if err != nil {
+		return err
+	}
+	if status != "" {
+		return errors.New("verification tree must remain clean at the released commit")
+	}
+	return nil
+}
+
 func (g checkout) git(ctx context.Context, args ...string) (string, error) {
 	return osrun.Run(ctx, g.config.Directory, map[string]string{"GIT_TERMINAL_PROMPT": "0"}, append([]string{"git"}, args...)...)
 }

@@ -364,20 +364,29 @@ func (e *engine) verify(ctx context.Context, target string, r Result) error {
 	if r.Plan.Commit != r.Commit || r.Plan.Tag != r.Tag {
 		return errors.New("receipt does not match its validated publication plan")
 	}
-	planJSON, _ := json.Marshal(r.Plan)
-	for _, destination := range r.Plan.Destinations {
-		_, err := osrun.Run(ctx, e.config.Directory, map[string]string{"RELEASE_COMMIT": r.Commit, "RELEASE_TAG": r.Tag, "RELEASE_TARGET": target, "RELEASE_DESTINATION": destination.Name, "RELEASE_URL": r.URL, "RELEASE_PLAN_JSON": string(planJSON)}, destination.Verify...)
-		if err != nil {
-			return fmt.Errorf("published destination %s: %w", destination.Name, err)
+	return e.git.withVerificationTree(ctx, r.Commit, func(tree checkout) error {
+		run := func(env map[string]string, command ...string) error {
+			if err := tree.checkVerificationTree(ctx, r.Commit); err != nil {
+				return err
+			}
+			_, err := osrun.Run(ctx, tree.config.Directory, env, command...)
+			return errors.Join(err, tree.checkVerificationTree(ctx, r.Commit))
 		}
-	}
-	if len(e.config.Verify) > 0 {
-		_, err := osrun.Run(ctx, e.config.Directory, map[string]string{"RELEASE_COMMIT": r.Commit, "RELEASE_TAG": r.Tag, "RELEASE_URL": r.URL, "RELEASE_TARGET": target, "RELEASE_REMOTE": e.config.Remote, "RELEASE_BRANCH": e.config.Branch}, e.config.Verify...)
-		if err != nil {
-			return fmt.Errorf("custom release verification: %w", err)
+		planJSON, _ := json.Marshal(r.Plan)
+		for _, destination := range r.Plan.Destinations {
+			err := run(map[string]string{"RELEASE_COMMIT": r.Commit, "RELEASE_TAG": r.Tag, "RELEASE_TARGET": target, "RELEASE_DESTINATION": destination.Name, "RELEASE_URL": r.URL, "RELEASE_PLAN_JSON": string(planJSON)}, destination.Verify...)
+			if err != nil {
+				return fmt.Errorf("published destination %s: %w", destination.Name, err)
+			}
 		}
-	}
-	return nil
+		if len(e.config.Verify) > 0 {
+			err := run(map[string]string{"RELEASE_COMMIT": r.Commit, "RELEASE_TAG": r.Tag, "RELEASE_URL": r.URL, "RELEASE_TARGET": target, "RELEASE_REMOTE": e.config.Remote, "RELEASE_BRANCH": e.config.Branch}, e.config.Verify...)
+			if err != nil {
+				return fmt.Errorf("custom release verification: %w", err)
+			}
+		}
+		return nil
+	})
 }
 func (e *engine) finish(s *State, r Result) error {
 	s.Released = r.Commit
