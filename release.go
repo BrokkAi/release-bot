@@ -402,8 +402,10 @@ func (e *engine) verify(ctx context.Context, target string, r Result) error {
 	})
 }
 func (e *engine) finish(s *State, r Result) error {
+	now := e.now().UTC()
+	s.recordVerified(r, now)
 	s.Released = r.Commit
-	s.ReleasedAt = e.now().UTC()
+	s.ReleasedAt = now
 	s.LastResult = &r
 	s.Job = nil
 	if err := e.save(s); err != nil {
