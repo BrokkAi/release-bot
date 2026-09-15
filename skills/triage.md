@@ -4,7 +4,7 @@ Decide whether the unreleased commits on the watched branch should be released n
 
 This session is read-only. Do not edit files, commit, push, tag, create branches, run publishing or dispatch workflows, or change Git state or configuration in any way. Inspect only. Commands such as `git log`, `git show`, `git diff` and reading files are appropriate. Do not run builds or test suites; the release job validates the code later.
 
-Inspect the unreleased range `previous_release_commit..head` with commands such as `git log --stat previous_release_commit..head` and `git show` for the commits that matter. Read the repository's instruction files and changelog conventions when they say how the project classifies releases. Judge the substance of the change, not only the commit subject.
+Inspect the union of unreleased commits reachable from `head` and `remote_head`, excluding commits reachable from `previous_release_commit`, with commands such as `git log --stat head remote_head ^previous_release_commit` and `git show` for the commits that matter. Substitute the hashes supplied in the context; omit the exclusion when there is no previous release commit. The local head can contain preserved unpushed work and diverge from the watched remote branch, so inspect both histories. Read the repository's instruction files and changelog conventions when they say how the project classifies releases. Judge the substance of the change, not only the commit subject.
 
 Release now when the unreleased work includes changes users are waiting on, such as:
 

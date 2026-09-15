@@ -21,6 +21,83 @@ func TestParseTriage(t *testing.T) {
 	}
 }
 
+func TestAgentTriageRemoteAdvanceWithLocalCommits(t *testing.T) {
+	for _, quiet := range []time.Duration{0, 15 * time.Minute} {
+		t.Run(quiet.String(), func(t *testing.T) {
+			f := newFixture(t)
+			cfg := &f.engine.config
+			cfg.Triage, cfg.Burst, cfg.Quiet = true, 0, Duration(quiet)
+			base := cfg.InitialRef
+			cfg.InitialRef = ""
+			ctx := context.Background()
+			if err := f.engine.git.open(ctx); err != nil {
+				t.Fatal(err)
+			}
+			localGit(t, cfg.Directory, "commit", "--allow-empty", "-m", "local documentation")
+			localHead := localGit(t, cfg.Directory, "rev-parse", "HEAD")
+			if err := writeState(*cfg, &State{Format: 1, Remote: cfg.Remote, Branch: cfg.Branch, Directory: cfg.Directory, Released: base, ReleasedAt: f.now.Add(-time.Hour)}); err != nil {
+				t.Fatal(err)
+			}
+			var prompts []string
+			f.engine.agent = triageAgent{
+				scriptedAgent: func(context.Context, string) (Result, error) {
+					t.Fatal("wait decision started a release")
+					return Result{}, nil
+				},
+				triage: func(_ context.Context, prompt string) (TriageDecision, error) {
+					prompts = append(prompts, prompt)
+					return TriageDecision{Decision: "wait", Reason: "routine changes"}, nil
+				},
+			}
+			cycle := func(want int) {
+				t.Helper()
+				if err := f.engine.cycle(ctx, false); err != nil {
+					t.Fatal(err)
+				}
+				if len(prompts) != want {
+					t.Fatalf("got %d triage calls, want %d", len(prompts), want)
+				}
+			}
+			if quiet > 0 {
+				cycle(0)
+				f.now = f.now.Add(quiet)
+			}
+			cycle(1)
+			f.now = f.now.Add(time.Hour)
+			cycle(1) // Persisted decisions are reused for unchanged commits.
+			localGit(t, f.source, "commit", "--allow-empty", "-m", "hotfix: crash on startup")
+			localGit(t, f.source, "push", "origin", "master")
+			remoteHead := localGit(t, f.source, "rev-parse", "HEAD")
+			if quiet > 0 {
+				cycle(1)
+				f.now = f.now.Add(quiet)
+			}
+			cycle(2)
+			for _, want := range []string{`"head": "` + localHead + `"`, `"remote_head": "` + remoteHead + `"`, `"unreleased_commits": 3`} {
+				if !strings.Contains(prompts[1], want) {
+					t.Fatalf("prompt lacks %q:\n%s", want, prompts[1])
+				}
+			}
+			if got := localGit(t, cfg.Directory, "rev-parse", "HEAD"); got != localHead {
+				t.Fatalf("local work moved: got %s, want %s", got, localHead)
+			}
+			f.now = f.now.Add(time.Hour)
+			cycle(2)
+			// Older state has no remote head and must be assessed once again.
+			s := fixtureState(t, f)
+			if s.Triage.RemoteHead != remoteHead || s.Triage.Head != localHead || s.Job != nil {
+				t.Fatalf("unexpected saved triage state: %+v", s)
+			}
+			s.Triage.RemoteHead = ""
+			if err := writeState(*cfg, s); err != nil {
+				t.Fatal(err)
+			}
+			cycle(3)
+			cycle(3)
+		})
+	}
+}
+
 // A recently released repository with only one unreleased commit is not due
 // by cadence; the agent decides whether that commit warrants an early release.
 func TestAgentTriageReleasesImportantFixesEarly(t *testing.T) {
