@@ -38,6 +38,7 @@ func TestWirePeer(t *testing.T) {
 		return response.Result
 	}
 	dir := ""
+	authenticated, modeSelected := false, false
 	modelSelected := false
 	modelOptionID := "provider-model"
 	modelCategory := "model"
@@ -45,7 +46,12 @@ func TestWirePeer(t *testing.T) {
 		modelOptionID, modelCategory = "model", ""
 	}
 	modelOptions := func(current string) []any {
-		return []any{map[string]any{"id": modelOptionID, "name": "Model", "type": "select", "category": modelCategory, "currentValue": current, "options": []any{map[string]string{"value": "fixture-small", "name": "Small"}, map[string]string{"value": "fixture-large", "name": "Large"}}}}
+		option := map[string]any{"id": modelOptionID, "name": "Model", "type": "select", "currentValue": current, "options": []any{map[string]string{"value": "fixture-small", "name": "Small"}, map[string]string{"value": "fixture-large", "name": "Large"}}}
+		// An absent optional category enables selection by conventional ID.
+		if modelCategory != "" {
+			option["category"] = modelCategory
+		}
+		return []any{option}
 	}
 	for {
 		var m struct {
@@ -59,13 +65,38 @@ func TestWirePeer(t *testing.T) {
 		var result any = map[string]any{}
 		switch m.Method {
 		case "initialize":
+			var p struct {
+				ProtocolVersion    int
+				ClientInfo         struct{ Name string }
+				ClientCapabilities struct {
+					FS       struct{ ReadTextFile, WriteTextFile bool }
+					Terminal bool
+				}
+			}
+			if json.Unmarshal(m.Params, &p) != nil || p.ProtocolVersion != 1 || p.ClientInfo.Name != "release-bot" || !p.ClientCapabilities.FS.ReadTextFile || !p.ClientCapabilities.FS.WriteTextFile || !p.ClientCapabilities.Terminal {
+				os.Exit(32)
+			}
 			result = map[string]any{"protocolVersion": 1, "agentCapabilities": map[string]any{}, "authMethods": []any{map[string]string{"id": "fixture", "name": "Fixture login"}}}
-		case "authenticate", "session/set_mode":
+		case "authenticate":
+			var p struct{ MethodID string }
+			if json.Unmarshal(m.Params, &p) != nil || p.MethodID != "fixture" || dir != "" {
+				os.Exit(33)
+			}
+			authenticated = true
+		case "session/set_mode":
+			var p struct{ SessionID, ModeID string }
+			if json.Unmarshal(m.Params, &p) != nil || p.SessionID != "fixture-session" || p.ModeID != "fixture" || dir == "" {
+				os.Exit(34)
+			}
+			modeSelected = true
 		case "session/new":
 			var p struct{ Cwd string }
 			_ = json.Unmarshal(m.Params, &p)
 			dir = p.Cwd
 			result = map[string]any{"sessionId": "fixture-session"}
+			if mode == "normal" || mode == "hang" {
+				result = map[string]any{"sessionId": "fixture-session", "modes": map[string]any{"currentModeId": "default", "availableModes": []any{map[string]string{"id": "default", "name": "Default"}, map[string]string{"id": "fixture", "name": "Fixture"}}}}
+			}
 			if strings.HasPrefix(mode, "model") && mode != "model-unsupported" {
 				result = map[string]any{"sessionId": "fixture-session", "configOptions": modelOptions("fixture-small")}
 			}
@@ -85,6 +116,9 @@ func TestWirePeer(t *testing.T) {
 			}
 			result = map[string]any{"configOptions": modelOptions(current)}
 		case "session/prompt":
+			if os.Getenv("RELEASE_BOT_REQUIRE_SETUP") == "1" && (!authenticated || !modeSelected) {
+				os.Exit(35)
+			}
 			if strings.HasPrefix(mode, "model") && !modelSelected {
 				os.Exit(31)
 			}
@@ -94,7 +128,8 @@ func TestWirePeer(t *testing.T) {
 			}
 			params := map[string]any{"sessionId": "fixture-session", "toolCall": map[string]string{"toolCallId": "build"}, "options": []any{map[string]string{"optionId": "yes", "kind": "allow_once", "name": "Allow once"}}}
 			permission := request("session/request_permission", params)
-			if !strings.Contains(string(permission["outcome"]), `"selected"`) {
+			var outcome struct{ Outcome, OptionID string }
+			if json.Unmarshal(permission["outcome"], &outcome) != nil || outcome.Outcome != "selected" || outcome.OptionID != "yes" {
 				os.Exit(24)
 			}
 			request("fs/write_text_file", map[string]any{"sessionId": "fixture-session", "path": filepath.Join(dir, "wire.txt"), "content": "alpha\nbeta\ngamma"})
@@ -139,7 +174,7 @@ func TestAgentProcessInteroperabilityAndTimeout(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Directory = t.TempDir()
 	cfg.StateDirectory = t.TempDir()
-	cfg.Agent = AgentConfig{Command: []string{executable, "-test.run=^TestWirePeer$"}, Environment: map[string]string{"RELEASE_BOT_WIRE_PEER": "normal"}, AuthMethod: "fixture", Mode: "fixture"}
+	cfg.Agent = AgentConfig{Command: []string{executable, "-test.run=^TestWirePeer$"}, Environment: map[string]string{"RELEASE_BOT_WIRE_PEER": "normal", "RELEASE_BOT_REQUIRE_SETUP": "1"}, AuthMethod: "fixture", Mode: "fixture"}
 	agent := agentProcess{config: cfg, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -154,12 +189,33 @@ func TestAgentProcessInteroperabilityAndTimeout(t *testing.T) {
 	if err != nil || string(data) != "alpha\nbeta\ngamma" {
 		t.Fatalf("file callback failed: %q %v", data, err)
 	}
+	files, err := filepath.Glob(filepath.Join(cfg.StateDirectory, "sessions", "*.jsonl"))
+	if err != nil || len(files) != 1 {
+		t.Fatalf("expected one transcript: %v %v", files, err)
+	}
+	data, err = os.ReadFile(files[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var permissionRecorded, messageRecorded, completionRecorded bool
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		var record map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(line), &record); err != nil {
+			t.Fatal(err)
+		}
+		permissionRecorded = permissionRecorded || (record["permission_request"] != nil && string(record["selected"]) == `"yes"`)
+		messageRecorded = messageRecorded || strings.Contains(string(record["update"]), `"agent_message_chunk"`)
+		completionRecorded = completionRecorded || (string(record["event"]) == `"session_end"` && string(record["phase"]) == `"session/prompt"` && record["error"] == nil)
+	}
+	if !permissionRecorded || !messageRecorded || !completionRecorded {
+		t.Fatalf("incomplete transcript: permission=%v message=%v completion=%v", permissionRecorded, messageRecorded, completionRecorded)
+	}
 	agent.config.Agent.Environment["RELEASE_BOT_WIRE_PEER"] = "hang"
 	ctx2, cancel2 := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel2()
 	start := time.Now()
-	if _, err := agent.Execute(ctx2, "hang"); err == nil {
-		t.Fatal("timeout was ignored")
+	if _, err := agent.Execute(ctx2, "hang"); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected prompt timeout, got %v", err)
 	}
 	if time.Since(start) > 3*time.Second {
 		t.Fatal("agent process leaked after timeout")
