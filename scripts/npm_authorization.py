@@ -18,6 +18,14 @@ PACKAGES = tuple(f"{package_installers.NPM_ROOT}-{system}-{arch}"
                  for system in ("linux", "darwin") for arch in ("x64", "arm64")) + (package_installers.NPM_ROOT,)
 
 
+def exchange_expiry(value):
+    if isinstance(value, int) and not isinstance(value, bool):
+        return datetime.datetime.fromtimestamp(value, datetime.timezone.utc)
+    if isinstance(value, str):
+        return datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    raise ValueError("npm exchange returned an unsupported expiry")
+
+
 def request_json(url, token, method="GET"):
     request = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}",
                                                   "Accept": "application/json"}, method=method)
@@ -40,7 +48,7 @@ def check():
     for package in PACKAGES:
         endpoint = "https://registry.npmjs.org/-/npm/v1/oidc/token/exchange/package/" + urllib.parse.quote(package, safe="")
         result = request_json(endpoint, identity, "POST")
-        expires = datetime.datetime.fromisoformat(result["expires"].replace("Z", "+00:00"))
+        expires = exchange_expiry(result["expires"])
         if result.get("token_type") != "oidc" or not result.get("token") or expires <= datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=5):
             raise ValueError(f"Missing or expiring package-scoped OIDC token for {package}")
         del result
