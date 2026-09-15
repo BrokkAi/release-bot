@@ -77,7 +77,7 @@ brb status
 brb version
 ```
 
-`--once` performs one scheduled check or recovery attempt and exits. It can publish a release. `--once --force` skips cadence checks but still requires new commits. `status` shows progress without launching an agent. `retry` resets the pending release's attempt budget and resumes work; stop an already-running daemon before using it. Existing `run` and `once` subcommands also work. Flags can appear before or after the repository argument. Use `--help` for options.
+`--once` performs one scheduled check or recovery attempt and exits. It can publish a release. `--once --force` skips cadence checks but still requires new commits. `status` shows progress without launching an agent. `retry` resets the pending release's attempt budget and resumes work; stop an already-running daemon before using it. Brokk Town lifts the same budget through the worker service's `POST /v1/retry` call. Existing `run` and `once` subcommands also work. Flags can appear before or after the repository argument. Use `--help` for options.
 
 `brb version` prints the embedded release tag. Local builds report `dev`; binaries installed with `go install ...@version` report the module version.
 
@@ -152,7 +152,7 @@ Startup checks immediately: if the last release is at least `daily` old (24 hour
 
 On first startup, GitHub repositories use the most recently published release whose tag is reachable from the watched branch as their baseline. Existing release records are trusted for this initial baseline; an arbitrary local tag is not used. `initial_ref` explicitly overrides the baseline. Without an existing release or an explicit baseline, all commits are unreleased and the first check is immediately eligible. Non-GitHub repositories can set `initial_ref` to a known released commit/tag.
 
-A release job records its target before starting the agent. Failed jobs preserve local work and failure evidence, then retry after 15 minutes. Each attempt has a two-hour budget shared by preparation, publishability validation, and publication. After three failed release attempts, the daemon exits with the final failure and leaves the job pending for operator inspection and `retry`. Restarting still reconciles saved publication evidence before enforcing the exhausted budget. A stored publication receipt is rechecked before asking the agent to act again, including after the attempt budget is exhausted. If the publisher lost its connection before returning a receipt, the daemon first tries to verify publication directly from the saved publication plan. This can reconcile a release whose asynchronous checks eventually pass.
+A release job records its target before starting the agent. Failed jobs preserve local work and failure evidence, then retry after 15 minutes. Each attempt has a two-hour budget shared by preparation, publishability validation, and publication. After three failed release attempts, the daemon exits with the final failure and leaves the job pending for operator inspection and `retry`. Restarting still reconciles saved publication evidence before enforcing the exhausted budget. A stored publication receipt is rechecked before asking the agent to act again, including after the attempt budget is exhausted. When that recheck fails with exactly the failure recorded by the previous attempt, the next attempt starts with the preparation agent instead of the publisher: an unchanged verification failure after the retry delay needs a source, script or workflow repair, which only preparation may make. Preparation receives the failure as repair context and may keep the same plan or produce a replacement release. If the publisher lost its connection before returning a receipt, the daemon first tries to verify publication directly from the saved publication plan. This can reconcile a release whose asynchronous checks eventually pass.
 
 Recovery instructions tell the agent to inspect existing tags, workflow runs and published artifacts before taking action. There is no atomic transaction spanning Git and external registries, so exactly-once publication cannot be guaranteed after a crash before the agent returns its receipt. Reconciliation reduces this risk. The baseline advances only to the verified tagged commit; later commits remain eligible for the next release.
 
@@ -292,6 +292,11 @@ Worker protocol v1 uses standard-library HTTP with JSON messages:
 - `POST /v1/runs` accepts one strict JSON task and responds with contiguous
   newline-delimited JSON events: `progress`, optional typed `result`,
   and `error`, `canceled`, or `complete`.
+- `POST /v1/retry` accepts the same strict JSON task, resets the pending
+  release's attempt budget in that workspace and returns `{"retry":"scheduled"}`
+  without starting an agent. It is the `brb retry` command for Town: a
+  workspace without a pending release answers 409 with the reason. Workers
+  advertising the `retry` capability support it.
 - `POST /v1/shutdown` asks the service to stop after the current stream.
 
 Version and capability negotiation happen before work starts. Town does not read

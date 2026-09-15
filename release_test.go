@@ -447,3 +447,38 @@ func TestStartupReleaseDeadline(t *testing.T) {
 		})
 	}
 }
+
+func TestRepeatedVerificationFailureRequestsPreparationRepair(t *testing.T) {
+	f := newFixture(t)
+	preparations, publications := 0, 0
+	var prompts []string
+	f.engine.agent = scriptedAgent(func(ctx context.Context, p string) (Result, error) {
+		if strings.HasPrefix(p, "# Publishability") {
+			preparations++
+			prompts = append(prompts, p)
+			return Result{Status: "ready", Plan: f.plan()}, nil
+		}
+		publications++
+		return f.published(t, false), nil
+	})
+	ctx := context.Background()
+	if err := f.engine.cycle(ctx, false); err == nil || !strings.Contains(err.Error(), "fixture-registry/package") {
+		t.Fatalf("missing registry output counted as success: %v", err)
+	}
+	s := fixtureState(t, f)
+	if s.Job.NeedsPreparation || s.Job.Candidate == nil || preparations != 1 || publications != 1 {
+		t.Fatalf("first verification failure must keep the publisher's receipt: %+v", s.Job)
+	}
+	// The failure is unchanged when the daemon reconciles again, so only a
+	// preparation repair can make progress; the publisher may not edit code.
+	f.now = f.now.Add(time.Hour)
+	if err := f.engine.cycle(ctx, false); err == nil {
+		t.Fatal("unchanged destination counted as success")
+	}
+	if preparations != 2 || publications != 2 {
+		t.Fatalf("repeated failure did not return to preparation: preparations=%d publications=%d", preparations, publications)
+	}
+	if !strings.Contains(prompts[1], "fixture-registry/package") {
+		t.Fatal("preparation lost the verification failure as repair context")
+	}
+}
