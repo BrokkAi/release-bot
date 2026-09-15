@@ -36,7 +36,11 @@ func TestEffortWirePeer(t *testing.T) {
 		if mode != "with-model" || model == "large" {
 			choices = append(choices, map[string]string{"value": "high"})
 		}
-		return []any{modelOption, map[string]any{"id": id, "name": "Reasoning effort", "type": "select", "category": category, "currentValue": effort, "options": choices}}
+		effortOption := map[string]any{"id": id, "name": "Reasoning effort", "type": "select", "currentValue": effort, "options": choices}
+		if category != "" {
+			effortOption["category"] = category
+		}
+		return []any{modelOption, effortOption}
 	}
 	dir := ""
 	for {
