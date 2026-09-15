@@ -144,6 +144,7 @@ def run(command, directory, registry="all"):
     if expected_python:
         wait_visible(lambda: python_exists(python_version, expected_python))
     print(f"Submitted selected packages ({registry}); npm visibility may lag behind accepted uploads")
+    return [p for p in packages if not existing[p["name"]]]
 
 
 def main():

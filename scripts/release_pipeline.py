@@ -25,7 +25,7 @@ def run(command, tag, native, packages):
         return
     # Refresh authorization in the actual publishing step before any upload.
     npm_authorization.check()
-    package_registry.run("publish", packages, "npm")
+    uploaded = package_registry.run("publish", packages, "npm")
     def complete():
         try:
             package_registry.run("verify", packages, "npm")
@@ -35,6 +35,12 @@ def run(command, tag, native, packages):
                 return False
             raise
     package_registry.wait_visible(complete)
+    # New uploads must match this job's exact staged bytes. Recovery of older
+    # uploads permits different gzip encoding only after comparing all payloads.
+    for package in uploaded or []:
+        exact = {key: value for key, value in package.items() if key != "_path"}
+        if not package_registry.npm_exists(exact):
+            raise ValueError("new npm upload is missing")
     github.publish(record, native, sha)
 
 
