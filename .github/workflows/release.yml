@@ -17,7 +17,7 @@ on:
         required: true
         type: string
       publish:
-        description: Publish after every check passes (false runs preflight only)
+        description: Validation only; use publish-packages.yml for publication
         type: boolean
         default: false
 
@@ -38,11 +38,16 @@ jobs:
           RELEASE_REF: ${{ github.ref }}
           RELEASE_TAG: ${{ inputs.tag }}
           RELEASE_EVENT: ${{ github.event_name }}
+          PUBLISH: ${{ inputs.publish }}
         run: |
+          if [[ "$PUBLISH" = true ]]; then
+            printf '%s\n' 'Use publish-packages.yml to publish all destinations together.'
+            exit 1
+          fi
           if [[ "$RELEASE_EVENT" = push ]]; then
             test "$RELEASE_REF" = "refs/tags/$RELEASE_TAG"
           else
-            test "$RELEASE_REF" = refs/heads/master
+            test "$RELEASE_REF" = refs/heads/master || test "$RELEASE_REF" = "refs/tags/$RELEASE_TAG"
           fi
 
   checks:
@@ -74,30 +79,6 @@ jobs:
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ inputs.tag }}
         run: python3 scripts/release.py preflight "$RELEASE_TAG" dist
-      - name: Stage, verify and publish complete release
-        if: inputs.publish
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ inputs.tag }}
-        run: python3 scripts/release.py publish "$RELEASE_TAG" dist
       - name: Explain preflight result
         if: ${{ !inputs.publish }}
-        run: echo 'All checks passed. The release remains an unpublished draft. Run again with publish=true to publish.' >> "$GITHUB_STEP_SUMMARY"
-
-  packages:
-    name: Start npm publication after manual native publication
-    needs: release
-    if: github.event_name == 'workflow_dispatch' && inputs.publish
-    runs-on: ubuntu-latest
-    timeout-minutes: 2
-    permissions:
-      contents: read
-      actions: write
-    steps:
-      - name: Dispatch the package workflow at the published tag
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ inputs.tag }}
-        run: gh workflow run publish-packages.yml --ref "$RELEASE_TAG" -f tag="$RELEASE_TAG" -F publish=true -f registry=npm
+        run: echo 'All checks passed. The release remains an unpublished draft. Use publish-packages.yml with publish=true in the publication phase.' >> "$GITHUB_STEP_SUMMARY"

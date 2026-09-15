@@ -2,6 +2,10 @@
 """Check, publish, and verify the built npm and PyPI packages; retries require identical bytes."""
 
 import argparse
+import base64
+import hashlib
+import io
+import tarfile
 import json
 from pathlib import Path
 import subprocess
@@ -30,8 +34,32 @@ def npm_exists(package):
     record = fetch_json(f"https://registry.npmjs.org/{name}/{package['version']}")
     if record is None:
         return False
-    if record.get("name") != package["name"] or record.get("version") != package["version"] or record.get("dist", {}).get("integrity") != package["integrity"]:
-        raise ValueError(f"published npm package differs from staged bytes: {package['name']}")
+    if record.get("name") != package["name"] or record.get("version") != package["version"]:
+        raise ValueError(f"published npm package metadata differs: {package['name']}")
+    if "_path" not in package:
+        if record.get("dist", {}).get("integrity") != package["integrity"]:
+            raise ValueError(f"published npm package differs from staged bytes: {package['name']}")
+        return True
+    dist = record["dist"]
+    url = urllib.parse.urlsplit(dist["tarball"])
+    if url.scheme != "https" or url.hostname != "registry.npmjs.org":
+        raise ValueError("unexpected npm tarball host")
+    with urllib.request.urlopen(dist["tarball"], timeout=60) as response:
+        data = response.read()
+    integrity = "sha512-" + base64.b64encode(hashlib.sha512(data).digest()).decode()
+    if dist.get("integrity") != integrity:
+        raise ValueError("downloaded npm package fails its published integrity")
+    with tarfile.open(package["_path"], "r:gz") as expected, tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as downloaded:
+        def contents(bundle):
+            result = {}
+            for member in bundle.getmembers():
+                if not member.isfile() or member.name in result:
+                    raise ValueError("invalid or duplicate npm tar entry")
+                result[member.name] = (member.mode, bundle.extractfile(member).read())
+            return result
+        if contents(expected) != contents(downloaded):
+            raise ValueError(f"published npm package differs from staged contents: {package['name']}")
+
     return True
 
 
@@ -89,6 +117,8 @@ def run(command, directory, registry="all"):
     if registry == "pypi":
         packages = []
     expected_python = python_files(directory / "python") if registry != "npm" else {}
+    for package in packages:
+        package["_path"] = directory / "npm" / package["filename"]
     # Discover conflicts in every destination before making the first write.
     existing = {p["name"]: npm_exists(p) for p in packages}
     existing_python = python_exists(python_version, expected_python) if expected_python else True
@@ -114,6 +144,7 @@ def run(command, directory, registry="all"):
     if expected_python:
         wait_visible(lambda: python_exists(python_version, expected_python))
     print(f"Submitted selected packages ({registry}); npm visibility may lag behind accepted uploads")
+    return [p for p in packages if not existing[p["name"]]]
 
 
 def main():

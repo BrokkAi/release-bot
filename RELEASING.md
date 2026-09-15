@@ -1,242 +1,152 @@
 # Releasing Brokk Release Bot
 
-This repository publishes a GitHub release containing four archives: Linux and
-macOS, each for amd64 and arm64. Every archive contains `brb`, the Apache
-2.0 `LICENSE`, `NOTICE`, `licenses/THIRD_PARTY_NOTICES.txt`, `README.md`,
-and `BUILD.json` identifying its exact commit, version,
-and platform. Archives are named `brokk-release-bot-TAG-OS-ARCH.tar.gz`;
-`checksums.txt` and `release.json` accompany them. The same binaries are distributed
-through npm as `@brokkai/release-bot` and through the PyPI launcher
-`brokk-release-bot` for uv. Every method installs the `brb` command.
-The Go module remains `github.com/BrokkAi/release-bot`, with its command at `cmd/brb`.
-Pushing a semantic version tag makes the module installable with `go install`;
-there is no separate Go registry upload. Existing state stays under `release-bot`.
+## Destinations and ordering
 
-## Checks on every change
+The release version comes from a new `vX.Y.Z` tag (or `-alpha.N`, `-beta.N`,
+`-rc.N`). Never move a completed release's tag. Unreleased commits after v0.5.1
+use a new version; the worktree feature starts the v0.6.0 release line.
 
-`ci.yml` runs on pushes, pull requests, and manual dispatch. It checks formatting,
-race tests, `go vet`, the CLI build/help, and release tooling on Linux and macOS.
-It also tests curl and Python checksum failures, npm argument/signal forwarding,
-builds all installer packages, and smoke-tests actual local npm and uv installs.
-Actionlint checks workflow syntax and shell commands. Official actions are pinned
-to commits; Dependabot proposes updates weekly.
+1. Build native Linux/macOS archives for amd64/arm64 and installer packages.
+2. Validate every destination's version and actual publishing identity.
+3. Publish four npm platform packages, then their dependent launcher:
+   - `@brokkai/release-bot-linux-x64`
+   - `@brokkai/release-bot-linux-arm64`
+   - `@brokkai/release-bot-darwin-x64`
+   - `@brokkai/release-bot-darwin-arm64`
+   - `@brokkai/release-bot` (exact-version optional platform dependencies)
+4. Verify all npm packages, then upload GitHub assets to a private draft,
+   check their exact uploaded bytes, and finalize the GitHub release.
 
-## Automatic tagged releases
+GitHub assets are `brokk-release-bot-TAG-OS-ARCH.tar.gz` for all four targets,
+`checksums.txt`, and `release.json`. Each archive contains `brb`, `README.md`,
+`BUILD.json` (exact commit/tag/platform), `LICENSE`, `NOTICE`, and
+`licenses/THIRD_PARTY_NOTICES.txt`.
 
-Push a new version tag at the intended master commit:
+The version tag also exposes the Go module `github.com/BrokkAi/release-bot`
+with command `./cmd/brb`. It has no separate registry upload: verify the exact
+remote tag and committed module metadata as part of the GitHub destination.
+There are no containers, crates, Maven packages, documentation deployments,
+update feeds, signing services, or notarization targets.
+
+PyPI `brokk-release-bot` remains deferred, as before: its trusted publisher is
+not configured. The Python wheel/sdist are built and locally tested but are not
+release destinations. Selecting `all` or `pypi` fails closed until that destination
+has a real non-publishing authorization check. Do not infer PyPI rights from npm.
+
+## Prepare without publication
+
+Read the repository instructions and fetch `origin/master`. Preserve all local
+work on the job's unique topic branch. Push preparation changes and merge their
+PR through the repository rules; never push preparation directly to master.
+Branch pushes and pull requests run `ci.yml` and do not publish.
+
+Fetch after merging and check out the actual merged SHA detached. Choose an
+unused version, and dispatch from master only if master still equals that SHA:
 
 ```sh
-git tag v0.3.1
-git push origin v0.3.1
+gh workflow run publish-packages.yml --repo github.com/BrokkAi/release-bot --ref master -f tag=v0.6.0 -F publish=false -f registry=npm
+gh run list --repo github.com/BrokkAi/release-bot --commit FULL_SHA --limit 100
 ```
 
-`publish-packages.yml` is the tag-triggered entry point. It calls `release.yml`
-to run all CI, validate publisher access, build and publish the native assets.
-Only after that succeeds does it build/test and upload all five npm packages
-from the exact tag. Follow **Publish packages** for the complete pipeline.
-The npm trusted-publisher workflow identity stays `publish-packages.yml`.
-PyPI remains opt-in through manual registry selection until its publisher is configured.
+`publish-packages.yml` calls the existing `release.yml` validation and `ci.yml`.
+The `packages` job runs in `packages-publish` with `contents: write` and
+`id-token: write`. It builds all deliverables from the exact checkout without
+requiring a public release or tag. Its actual GitHub token creates/updates an
+empty private draft to prove write access. No final assets or registry packages
+are uploaded in preflight. The ordinary Actions package artifact is retained as
+build evidence. The empty draft is disposable and is recreated during publication.
 
-Successful npm uploads finish without waiting for public version indexes or
-running immediate public-install checks. Local installer tests, native checksums,
-package hashes, existing-version conflict checks and upload errors remain gates.
-The explicit registry `verify` command can check public bytes later.
+For every npm package, `scripts/npm_authorization.py` exchanges this same job's
+GitHub OIDC identity with npm for a package-scoped token, checks its type and
+expiry, then discards it without logging or saving it. npm must accept the
+configured repository/workflow/environment trust for each package; public
+metadata or a local developer login is not authorization evidence. See the
+[npm registry OIDC API](https://api-docs.npmjs.com/#tag/OIDC).
+The exchange establishes package-scoped identity evidence. It does not prove
+permission for direct publication rather than staging; npm enforces that grant
+on the first final registry upload. Keep the GitHub draft private if upload fails.
+The existing trusted publishers must name BrokkAi/release-bot,
+`publish-packages.yml`, and `packages-publish`. A legacy `NPM_TOKEN` secret
+blocks this check, because checking OIDC would not validate that other identity.
+Remove the legacy secret only after confirming the intended OIDC configuration.
+Required environment approvals remain required. Failed exchanges identify the
+exact package needing its owner's trusted-publisher repair; do not test by upload.
 
-## Prepare without publishing
+Require completed successful exact-SHA runs and all validation jobs. Poll
+`gh run view RUN_ID --repo github.com/BrokkAi/release-bot --json status,conclusion`
+at 15–30 second intervals. Inspect failed job logs before repairing a failure.
+An unrelated or earlier successful SHA is insufficient. Required workflow files:
+`ci.yml`, `release.yml`, `publish-packages.yml`.
 
-Commit and push preparation changes to `master`. Choose an unused version such as
-`v0.1.0` (or `v0.1.0-rc.1` for a prerelease), then run:
-
-```sh
-gh workflow run release.yml --repo BrokkAi/release-bot --ref master -f tag=v0.1.0
-gh run list --repo BrokkAi/release-bot --workflow release.yml --limit 5
-gh run watch RUN_ID --repo BrokkAi/release-bot --exit-status
-```
-
-Confirm the run's `headSha` is the intended prepared commit. The workflow reruns
-all CI, builds all four archives with the Go version in `go.mod`, validates their
-contents and checksums without uploading them. Its publishing job uses the
-automatic `GITHUB_TOKEN` with `contents: write`.
-It creates or updates an **unpublished draft** using that actual token to verify
-write access. No personal access token or package-registry secret is required.
-Missing rights fail here; no release assets are uploaded to the draft in this mode.
-
-The empty draft is disposable: deleting it does not invalidate the successful
-workflow authorization check. The publishing job recreates it with its own
-credential and rechecks write access before uploading. A public release or tag
-for the same version must match the intended commit. A draft targeting another
-commit blocks; do not overwrite it automatically. Resolve the unused draft or
-choose a new version and repeat preflight. Never move a public tag.
-
-## Publish
-
-Run the same workflow and version with publication enabled:
+Daemon commands use `RELEASE_COMMIT`, `RELEASE_TAG`, and `RELEASE_TARGET`:
 
 ```sh
-gh workflow run release.yml --repo BrokkAi/release-bot --ref master -f tag=v0.1.0 -F publish=true
-```
-
-Keep `master` at the validated commit between preflight and this dispatch. If it
-changed, prepare the new commit and version again. The workflow independently
-repeats every check; an existing draft for another commit prevents publication.
-Manual native dispatches use `master`; automatic releases use their exact tag. Both keep the code, workflow and artifact commit aligned.
-
-After preflight, all six files are uploaded to the private draft, downloaded and
-checked byte-for-byte. Only a complete set can become public. GitHub creates the
-tag at the exact prepared commit when publishing. The script then verifies the
-public release, remote tag, and all downloads again. Stable releases become
-latest; prereleases do not. Public artifacts are never overwritten on retry.
-
-Ordinary branch pushes do not publish. Version tag pushes automatically run the
-complete pipeline. The release bot can retain its manual preflight and
-`publish=true` flow; a successful manual native publication now automatically
-dispatches npm publication at the resulting tag. Monitor that package run too. Include `ci.yml` and `release.yml`
-among the required workflows in that plan. Their Actions runs must pass for the
-exact release commit.
-
-The release bot's reproducible destination checks read `RELEASE_COMMIT`,
-`RELEASE_TAG`, and `RELEASE_TARGET` from the environment. Run them only after the
-successful preflight dispatch above:
-
-```sh
-python3 scripts/release_check.py build
-python3 scripts/release_check.py authorization
+# Build evidence for every destination, including all native builds and CI:
+python3 scripts/package_check.py build
+# Same actual packages job's GitHub authorization:
+python3 scripts/package_check.py github-authorization
+# Same actual packages job's npm authorization, all five packages:
+python3 scripts/package_check.py authorization
+# Mutable version gates:
 python3 scripts/release_check.py version
+python3 scripts/package_check.py version
+# Independent post-publication verification:
+python3 scripts/release_check.py published
+python3 scripts/package_check.py published
 ```
 
-The authorization check finds the successful `Release` preflight run for the
-exact commit and tag, requires every job to have passed, verifies the publisher
-step used that run's `github.token`. A remaining draft must target the same
-commit, but the draft need not still exist. The publishing job checks its actual
-credential again before uploads. An already-public release goes directly to
-verification without requiring another private draft or publishing permission.
-The checker does not treat this machine's `gh` login as the publisher. The version check rejects conflicting tags/releases and permits an
-exact matching draft or a complete immutable published release during recovery.
-After publication, `python3 scripts/release_check.py published` rebuilds the
-assets, validates the downloads against their own published manifest and
-checksums, then compares every unpacked file and its permissions with the rebuild.
-Gzip encoding may differ across machines even when the archive contents are
-identical. Same-job staging checks still compare exact uploaded bytes.
+Evidence checks reject absent/failed/incomplete/wrong-SHA runs, missing publisher
+steps, and missing/expired exact-SHA build artifacts. Registry checks rebuild in
+a temporary directory and check all five destinations; any conflict fails.
 
-## npm and PyPI installers
+## Publication (separate phase)
 
-The installer packaging follows the sibling Anvil and Mjolnir projects: npm uses
-four native platform packages plus a launcher, and Python uses a small launcher
-that downloads a pinned GitHub archive. Python packages embed the archive and
-binary hashes, so no Go toolchain or curl is required by either package manager.
-The Python launcher replaces itself with `brb`; the npm launcher forwards
-arguments, terminal streams, exit status, and termination signals.
-
-`scripts/package_installers.py` validates all native archives against the release
-manifest and the checkout's exact commit before packaging. Versions come from the
-tag. Use `vX.Y.Z`, `vX.Y.Z-alpha.N`, `vX.Y.Z-beta.N`, or `vX.Y.Z-rc.N`:
-Python maps these prereleases to `X.Y.ZaN`, `X.Y.ZbN`, and `X.Y.ZrcN`, while npm
-keeps the SemVer spelling and publishes prereleases under `next`.
-
-Before the first registry publication, configure the GitHub environment
-`packages-publish` and the publishing accounts:
-
-npm's five packages already have GitHub trusted publishers configured. PyPI is
-still pending. Use `-f registry=npm` for current releases; this publishes through
-the configured npm identity without requiring a local interactive login. Keep
-PyPI out of a release's destination plan until its publisher is configured.
-
-- PyPI: add a pending trusted publisher for `brokk-release-bot`, owner `BrokkAi`,
-  repository `release-bot`, workflow `publish-packages.yml`, environment
-  `packages-publish`. PyPI supports [creating the project on first OIDC publication](https://docs.pypi.org/trusted-publishers/creating-a-project-through-oidc/).
-- npm: establish publishing rights for `@brokkai/release-bot` and
-  `@brokkai/release-bot-{linux,darwin}-{x64,arm64}` (five packages total).
-  Configure each package's [trusted publisher](https://docs.npmjs.com/trusted-publishers/)
-  with the same repository, workflow, and environment. If an initial publication
-  needs a token, the workflow accepts an authorized granular token in the
-  environment's `NPM_TOKEN` secret. Remove it after OIDC is configured.
-
-Normal version tags publish native assets and npm automatically. For package-only
-validation or recovery after a partial release, dispatch the package workflow
-**from that exact existing tag**:
+After all preflight gates succeed, dispatch the exact prepared commit's branch
+or existing tag through `publish-packages.yml` with `publish=true`. If master
+advanced, do not dispatch its new commit for this release. A semantic version
+tag push also invokes publication and is prohibited during preflight.
 
 ```sh
-gh workflow run publish-packages.yml --repo BrokkAi/release-bot --ref v0.1.0 -f tag=v0.1.0
+gh workflow run publish-packages.yml --repo github.com/BrokkAi/release-bot --ref master -f tag=v0.6.0 -F publish=true -f registry=npm
 ```
 
-The default run downloads and verifies the published native assets, builds the
-five npm tarballs and Python wheel/sdist, tests local installation, checks
-registry version availability, and tests the Python launcher's cold download.
-It saves the packages as a workflow artifact. These checks make no registry
-writes and do **not** establish publishing authorization. Verify the actual
-trusted-publisher configuration and publishing rights before requesting writes.
+`release.yml` is now validation-only; `publish=true` there fails with directions
+to the complete pipeline. GitHub's final release operation creates the exact tag;
+this workflow already handles npm and does not rely on a GITHUB_TOKEN-created
+tag starting another workflow.
 
-```sh
-gh workflow run publish-packages.yml --repo BrokkAi/release-bot --ref v0.1.0 -f tag=v0.1.0 -F publish=true
-```
+Before its first upload, the pipeline checks native/package metadata, all version
+conflicts, GitHub write access, and the actual npm identity. The publishing step
+refreshes authorization. Platform packages precede the launcher. A failed npm
+upload leaves GitHub unpublished. Retries reuse identical existing versions and
+resume missing packages; they never overwrite conflicting immutable versions.
+All npm packages must be visible and verified before GitHub is finalized. Registry
+propagation has a bounded wait; a timeout requires verification/retry, not an
+unconditional re-upload. Existing public GitHub assets are read-only verified.
 
-Select `-f registry=npm` or `-f registry=pypi` to check, publish and verify only
-that registry; the default `npm` works with the configured publisher. `all` requires both. Packages for both installers are
-still built and tested. The CLI accepts the same selection with `--registry`:
+Uploaded native bytes are compared to the exact same-job staged bytes. Later
+independent verification validates downloaded archives against their published
+manifest/checksums, then compares unpacked files, permissions and metadata to
+the expected build. npm verification similarly validates the downloaded tarball's
+published SHA-512 integrity and compares every file and permission to the expected
+package. Cross-machine gzip encoding differences are allowed; payload changes fail.
 
-```sh
-gh workflow run publish-packages.yml --repo BrokkAi/release-bot --ref v0.3.0 -f tag=v0.3.0 -f registry=npm -F publish=true
-python3 scripts/package_registry.py verify dist/packages --registry npm
-```
-
-Publication checks every existing package for conflicts before uploading, submits
-all four npm platform packages before the root package, then optionally publishes
-the Python distributions with uv's [trusted publishing](https://docs.astral.sh/uv/guides/package/).
-Immediate public npm install checks are omitted. Explicit PyPI publication still checks its public uv install. Retries accept
-existing files only when their hashes match the staged bytes; partial Python
-uploads resume through `uv publish --check-url`. Preserve validated artifacts if
-toolchain changes make a later rebuild differ. Never overwrite conflicting versions.
-
-When driving this repository with the bot, enumerate GitHub and all packages in
-the selected registries in the publication plan. Include `publish-packages.yml` in its required
-workflows and verify registry publication separately; the existing
-`release_check.py published` command verifies only the native GitHub destination.
-GitHub assets must be public before the Python launcher can download them, so
-registry failure can leave a partial release. Reconcile it by rerunning the package
-workflow for the same tag and registry selection; do not mark the overall release
-successful until every selected upload succeeds. Public npm index propagation is not a release gate; use the explicit verify command later when needed. Installer packaging can be validated locally before
-publishing GitHub assets:
-
-```sh
-python3 scripts/package_installers.py v0.1.0 dist/native dist/packages
-python3 scripts/smoke_installers.py --tag v0.1.0 --assets dist/native --packages dist/packages
-python3 scripts/package_registry.py check dist/packages
-python3 scripts/package_registry.py verify dist/packages
-```
-
-The first two commands build/test; `check` reads registry availability and
-integrity; `verify` requires all files to be public and identical. For a clean
-checkout, `python3 scripts/smoke_installers.py` builds native assets and packages
-in temporary directories and smoke-tests both installers without publishing.
-Package tooling additionally requires Node.js/npm and uv; CI tests Node.js 24.
-
-## Recovery and local tooling
-
-A failed upload or validation leaves the draft unpublished. Rerun the same
-workflow for the same commit/version; private draft uploads can be replaced.
-A retry finding an already-published release only verifies it and does not edit
-its assets. Network or permission failures are reported, never treated as success.
-
-Local packaging and checks need Go, Git, and Python 3; publishing also needs `gh`:
+## Local validation and recovery
 
 ```sh
 make check build
 python3 -m unittest discover -s scripts -p '*_test.py' -v
-python3 scripts/release.py package v0.1.0 dist
-python3 scripts/release.py verify v0.1.0 dist
+python3 scripts/licenses.py
+python3 scripts/smoke_installers.py
 ```
 
-Use an empty output directory for packaging. Local packaging and `verify` make
-no GitHub writes. `preflight` and `publish` additionally require `GH_REPO` and an
-authenticated `gh` environment. The bot must use evidence from the actual Actions
-publishing job; a successful invocation with a developer's token is insufficient.
+Use the Go version in `go.mod`, Node.js 24, Python 3, and uv 0.12.3. CI runs Go
+race tests/vet, CLI smoke tests, release tooling and real local npm/uv installation
+on Linux and macOS, plus actionlint. Follow `licenses/README.md` for dependency
+changes. Native/package builds repeat legal-file validation.
 
-## License validation
-
-Before committing release preparation, run `python3 scripts/licenses.py`.
-For dependency or Go version changes, follow [licenses/README.md](licenses/README.md)
-to review the policy and regenerate notices. Native packaging repeats this
-check and includes the exact project license, notice, and dependency report.
-Every npm package retains these files from the verified native assets. The
-package smoke test inspects their bytes as well as exercising installation.
-Python wheel and source distributions carry the same legal files.
+A partial release is not complete until both independent published checks pass.
+Keep its immutable version and exact commit, inspect matching drafts and existing
+packages, and resume the same pipeline. Old `untagged-*` draft aliases from earlier
+releases are historical recovery records; they do not authorize reusing completed
+tags or overwriting their assets.
