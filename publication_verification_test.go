@@ -168,6 +168,32 @@ func TestPublicationVerificationChecksInitialTree(t *testing.T) {
 	}
 }
 
+func TestPublicationVerificationInitializesReleasedSubmodules(t *testing.T) {
+	t.Setenv("GIT_ALLOW_PROTOCOL", "file")
+	f := newFixture(t)
+	ctx := context.Background()
+	if err := f.engine.git.open(ctx); err != nil {
+		t.Fatal(err)
+	}
+	module := t.TempDir()
+	localGit(t, module, "init")
+	writeTestFile(t, filepath.Join(module, "verify.sh"), "#!/bin/sh\ntest -f \"$1\"\n")
+	localGit(t, module, "add", "verify.sh")
+	localGit(t, module, "commit", "-m", "add verifier")
+	dir := f.engine.config.Directory
+	localGit(t, dir, "submodule", "add", module, "checks")
+	localGit(t, dir, "commit", "-m", "add verification submodule")
+	localGit(t, dir, "push", "origin", "HEAD:master")
+	f.head = localGit(t, dir, "rev-parse", "HEAD")
+	r := f.published(t, true)
+	r.Plan = f.plan()
+	r.Plan.Destinations[0].Verify = []string{"sh", "checks/verify.sh", f.registry}
+	writeTestFile(t, f.registry, "published")
+	if err := f.engine.verify(ctx, f.head, r); err != nil {
+		t.Fatalf("released submodule verifier failed: %v", err)
+	}
+}
+
 func TestVerificationTreeCleanupAfterCancellation(t *testing.T) {
 	for _, legacy := range []bool{false, true} {
 		t.Run(fmt.Sprint("legacy-clone=", legacy), func(t *testing.T) {

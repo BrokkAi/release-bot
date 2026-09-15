@@ -43,6 +43,9 @@ func (g checkout) withVerificationTree(ctx context.Context, commit string, verif
 	}
 	tree := g
 	tree.config.Directory = directory
+	if _, err := tree.git(ctx, "submodule", "update", "--init", "--recursive"); err != nil {
+		return fmt.Errorf("initialize verification submodules: %w", err)
+	}
 	return verify(tree)
 }
 
