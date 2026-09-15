@@ -178,6 +178,11 @@ func (e *engine) cycle(ctx context.Context, force bool) error {
 		reason = "forced cadence"
 	}
 	if reason == "" {
+		if reason, err = e.triage(ctx, s, head, total, now); err != nil {
+			return err
+		}
+	}
+	if reason == "" {
 		e.report(s, "waiting", "Waiting for release cadence or new commits")
 		e.log.Info("monitoring", "unreleased_commits", total, "recent_commits", recent)
 		return nil
