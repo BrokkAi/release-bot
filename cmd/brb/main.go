@@ -72,6 +72,7 @@ func executeWithRun(ctx context.Context, args []string, logger *slog.Logger, run
 	defaults := bot.DefaultConfig()
 	burst := flags.Int("burst", defaults.Burst, "unreleased commits within the burst window to trigger an early release; 0 disables (overrides config; minimum gap and quiet period still apply)")
 	minimumGap := flags.Duration("minimum-gap", time.Duration(defaults.MinimumGap), "minimum time since the last release before an early release, e.g. 10m; 0 disables the gap (overrides config)")
+	triage := flags.Bool("triage", defaults.Triage, "ask the agent whether unreleased commits warrant releasing before the cadence; --triage=false disables (overrides config)")
 	quiet := flags.Duration("quiet", time.Duration(defaults.Quiet), "branch quiet period before an early release, e.g. 1m; 0 disables the wait (overrides config)")
 	var agentArgs []string
 	flags.Func("agent-arg", "argument for the agent; repeat as needed", func(value string) error { agentArgs = append(agentArgs, value); return nil })
@@ -130,6 +131,9 @@ func executeWithRun(ctx context.Context, args []string, logger *slog.Logger, run
 			if *quiet < 0 {
 				err = errors.New("--quiet must be zero or greater")
 			}
+		}
+		if f.Name == "triage" {
+			cfg.Triage = *triage
 		}
 		if f.Name == "burst" {
 			cfg.Burst = *burst
