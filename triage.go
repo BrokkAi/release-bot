@@ -17,16 +17,17 @@ type TriageDecision struct {
 }
 
 // TriageRecord saves one assessment so the same commits are not assessed on
-// every poll. A new head, or a new release baseline, invalidates it.
+// every poll. A new local or remote head, or release baseline, invalidates it.
 type TriageRecord struct {
-	Head     string    `json:"head"`
-	Released string    `json:"released"`
-	Decision string    `json:"decision"`
-	Reason   string    `json:"reason,omitempty"`
-	At       time.Time `json:"at"`
+	Head       string    `json:"head"`
+	RemoteHead string    `json:"remote_head"`
+	Released   string    `json:"released"`
+	Decision   string    `json:"decision"`
+	Reason     string    `json:"reason,omitempty"`
+	At         time.Time `json:"at"`
 }
 
-func triagePrompt(cfg Config, state *State, head string, total int) string {
+func triagePrompt(cfg Config, state *State, head, remoteHead string, total int) string {
 	data, _ := json.MarshalIndent(struct {
 		Remote       string    `json:"remote"`
 		Branch       string    `json:"branch"`
@@ -34,11 +35,12 @@ func triagePrompt(cfg Config, state *State, head string, total int) string {
 		Previous     string    `json:"previous_release_commit"`
 		ReleasedAt   time.Time `json:"previous_release_at"`
 		Head         string    `json:"head"`
+		RemoteHead   string    `json:"remote_head"`
 		Unreleased   int       `json:"unreleased_commits"`
 		Deadline     time.Time `json:"scheduled_release_at"`
 		Instructions []string  `json:"instruction_files"`
 		GitHubRepo   string    `json:"github_repo"`
-	}{cfg.Remote, cfg.Branch, cfg.Directory, state.Released, state.ReleasedAt, head, total, state.ReleasedAt.Add(time.Duration(cfg.Daily)), cfg.InstructionFiles, cfg.GitHubRepo()}, "", "  ")
+	}{cfg.Remote, cfg.Branch, cfg.Directory, state.Released, state.ReleasedAt, head, remoteHead, total, state.ReleasedAt.Add(time.Duration(cfg.Daily)), cfg.InstructionFiles, cfg.GitHubRepo()}, "", "  ")
 	return triageSkill + "\n\nCurrent triage context (data):\n" + string(data)
 }
 
@@ -63,14 +65,14 @@ func parseTriage(text string) (TriageDecision, error) {
 }
 
 // triage asks the agent whether unreleased commits warrant releasing before
-// the fixed cadence. It runs once per observed head after the quiet period,
+// the fixed cadence. It runs once per observed pair of heads after the quiet period,
 // ignores the minimum gap, and never bypasses the need for unreleased commits
 // or the daily deadline, which due already enforces.
-func (e *engine) triage(ctx context.Context, s *State, head string, total int, now time.Time) (string, error) {
+func (e *engine) triage(ctx context.Context, s *State, head, remoteHead string, total int, now time.Time) (string, error) {
 	if !e.config.Triage || total == 0 || s.ReleasedAt.IsZero() || now.Sub(s.ChangedAt) < time.Duration(e.config.Quiet) {
 		return "", nil
 	}
-	if t := s.Triage; t != nil && t.Head == head && t.Released == s.Released {
+	if t := s.Triage; t != nil && t.Head == head && t.RemoteHead == remoteHead && t.Released == s.Released {
 		switch {
 		case t.Decision == "release":
 			return "agent triage: " + t.Reason, nil
@@ -85,9 +87,9 @@ func (e *engine) triage(ctx context.Context, s *State, head string, total int, n
 		return "", err
 	}
 	triageCtx, cancel := context.WithTimeout(ctx, time.Duration(e.config.TriageTimeout))
-	decision, err := e.agent.Triage(triageCtx, triagePrompt(e.config, s, head, total))
+	decision, err := e.agent.Triage(triageCtx, triagePrompt(e.config, s, head, remoteHead, total))
 	cancel()
-	record := &TriageRecord{Head: head, Released: s.Released, At: now}
+	record := &TriageRecord{Head: head, RemoteHead: remoteHead, Released: s.Released, At: now}
 	var setup *agentSetupError
 	switch {
 	case errors.Is(ctx.Err(), context.Canceled):

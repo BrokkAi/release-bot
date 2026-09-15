@@ -179,7 +179,7 @@ func (e *engine) cycle(ctx context.Context, force bool) error {
 		reason = "forced cadence"
 	}
 	if reason == "" {
-		if reason, err = e.triage(ctx, s, head, total, now); err != nil {
+		if reason, err = e.triage(ctx, s, head, remoteHead, total, now); err != nil {
 			return err
 		}
 	}
