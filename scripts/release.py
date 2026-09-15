@@ -148,7 +148,7 @@ class GitHub:
         self.base = f"repos/{repo}"
 
     def api(self, path, payload=None, method="GET"):
-        args = ["gh", "api", "--method", method, path]
+        args = ["gh", "api", "--hostname", "github.com", "--method", method, path]
         data = None
         if payload is not None:
             args += ["--input", "-"]
@@ -156,7 +156,7 @@ class GitHub:
         return json.loads(run(*args, data=data))
 
     def pages(self, path):
-        pages = json.loads(run("gh", "api", "--paginate", "--slurp", path))
+        pages = json.loads(run("gh", "api", "--paginate", "--slurp", "--hostname", "github.com", path))
         return [entry for page in pages for entry in page]
 
     def tag_commit(self, tag):
@@ -217,7 +217,7 @@ class GitHub:
             local = expected[asset["name"]].read_bytes()
             if asset["state"] != "uploaded" or asset["size"] != len(local):
                 raise ValueError(f"incomplete GitHub asset: {asset['name']}")
-            remote = run("gh", "api", "-H", "Accept: application/octet-stream", f"{self.base}/releases/assets/{asset['id']}")
+            remote = run("gh", "api", "-H", "Accept: application/octet-stream", "--hostname", "github.com", f"{self.base}/releases/assets/{asset['id']}")
             if digest(remote) != digest(local):
                 raise ValueError(f"GitHub asset checksum mismatch: {asset['name']}")
 
@@ -234,7 +234,7 @@ class GitHub:
             for asset in assets:
                 if asset["state"] != "uploaded" or asset["size"] <= 0:
                     raise ValueError(f"incomplete GitHub asset: {asset['name']}")
-                data = run("gh", "api", "-H", "Accept: application/octet-stream", f"{self.base}/releases/assets/{asset['id']}")
+                data = run("gh", "api", "-H", "Accept: application/octet-stream", "--hostname", "github.com", f"{self.base}/releases/assets/{asset['id']}")
                 if len(data) != asset["size"]:
                     raise ValueError(f"incomplete GitHub download: {asset['name']}")
                 (downloaded / asset["name"]).write_bytes(data)
@@ -245,7 +245,7 @@ class GitHub:
         staged_here = release["draft"]
         if release["draft"]:
             for path in sorted(directory.iterdir()):
-                run("gh", "release", "upload", tag, str(path), "--repo", self.repo, "--clobber")
+                run("gh", "release", "upload", tag, str(path), "--repo", "github.com/" + self.repo, "--clobber")
             # Every byte is staged and checked while the release is private.
             self.verify_assets(release, directory)
             if self.tag_commit(tag) not in (None, sha):
