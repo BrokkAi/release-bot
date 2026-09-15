@@ -176,6 +176,88 @@ func TestPartialPublicationRemainsPendingAndReconciles(t *testing.T) {
 		t.Fatal("reconciliation republished")
 	}
 }
+
+func TestReplacementPlanReconcilesAfterLostReceipt(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	plan := f.plan()
+	plan.Tag = "v1.0.1"
+	plan.Destinations[0].Version = "1.0.1"
+	plan.Destinations[0].Verify = []string{"test", "-f", f.registry + "-v2"}
+	preparations, publications := 0, 0
+	f.engine.starting = true
+	f.engine.agent = scriptedAgent(func(_ context.Context, prompt string) (Result, error) {
+		if strings.HasPrefix(prompt, "# Publishability") {
+			preparations++
+			if preparations == 1 {
+				return Result{Status: "ready", Plan: f.plan()}, nil
+			}
+			return Result{Status: "ready", Plan: plan}, nil
+		}
+		publications++
+		switch publications {
+		case 1:
+			return f.published(t, false), nil
+		case 2:
+			return Result{}, &blockedResultError{detail: "prepare a corrected patch version"}
+		case 3:
+			localGit(t, f.engine.config.Directory, "tag", plan.Tag, f.head)
+			localGit(t, f.engine.config.Directory, "push", "origin", plan.Tag)
+			return Result{}, errors.New("publisher connection lost")
+		default:
+			t.Fatal("recovery launched another publisher")
+			return Result{}, nil
+		}
+	})
+	for attempt := 1; attempt <= 3; attempt++ {
+		err := f.engine.cycle(ctx, false)
+		if err == nil || errors.Is(err, errAttemptsExhausted) != (attempt == 3) {
+			t.Fatalf("attempt %d: %v", attempt, err)
+		}
+	}
+	s := fixtureState(t, f)
+	if preparations != 2 || publications != 3 || s.Job.Plan.Tag != plan.Tag || s.Job.Candidate.Tag != "v1.0.0" {
+		t.Fatalf("unexpected replacement state: preparations=%d publications=%d job=%+v", preparations, publications, s.Job)
+	}
+	// A replacement tag alone must not advance the release or bypass the budget.
+	if err := f.engine.cycle(ctx, false); !errors.Is(err, errAttemptsExhausted) || fixtureState(t, f).Job == nil {
+		t.Fatalf("incomplete replacement accepted: %v", err)
+	}
+	writeTestFile(t, f.registry+"-v2", "completed replacement upload")
+	if err := f.engine.verify(ctx, f.head, Result{Status: "released", Commit: plan.Commit, Tag: plan.Tag, Plan: plan}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.engine.cycle(ctx, false); err != nil {
+		t.Fatalf("completed replacement did not reconcile: %v", err)
+	}
+	s = fixtureState(t, f)
+	if s.Job != nil || s.Released != f.head || s.LastResult.Tag != plan.Tag || preparations != 2 || publications != 3 {
+		t.Fatalf("replacement was not recorded without another attempt: %+v", s)
+	}
+}
+
+func TestReconcileChangedDestinationPlanAtSameTag(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	if err := f.engine.git.open(ctx); err != nil {
+		t.Fatal(err)
+	}
+	old := f.published(t, false)
+	old.Plan = f.plan()
+	plan := f.plan()
+	plan.Destinations[0].Verify = []string{"test", "-f", f.registry + "-corrected"}
+	writeTestFile(t, f.registry+"-corrected", "published artifact at corrected destination")
+	cfg := f.engine.config
+	s := &State{Format: 1, Remote: cfg.Remote, Branch: cfg.Branch, Directory: cfg.Directory,
+		Job: &Job{Target: f.head, Phase: "publish", Plan: plan, Candidate: &old, Tries: cfg.Attempts}}
+	if err := f.engine.resume(ctx, s); err != nil {
+		t.Fatal(err)
+	}
+	got := fixtureState(t, f)
+	if got.Job != nil || got.LastResult == nil || got.LastResult.Plan.Destinations[0].Verify[2] != f.registry+"-corrected" {
+		t.Fatalf("corrected destination plan was not recorded: %+v", got)
+	}
+}
 func TestConcurrentCommitsAreNotSwallowed(t *testing.T) {
 	f := newFixture(t)
 	f.engine.agent = scriptedAgent(func(ctx context.Context, p string) (Result, error) {
