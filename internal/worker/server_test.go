@@ -27,7 +27,7 @@ func testClient(t *testing.T, socket string) *http.Client {
 	}}
 }
 
-func startWorker(t *testing.T, run RunFunc) (*http.Client, string) {
+func startWorker(t *testing.T, run RunFunc, retry ...RetryFunc) (*http.Client, string) {
 	t.Helper()
 	base := os.TempDir()
 	if runtime.GOOS == "darwin" && len(filepath.Join(base, "worker.sock")) > 90 {
@@ -42,7 +42,11 @@ func startWorker(t *testing.T, run RunFunc) (*http.Client, string) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- Serve(ctx, socket, Initialize{Protocol: 1, MinimumProtocol: 1, Bot: "test-bot", Version: "1.2.3", Capabilities: []string{"run", "progress"}}, run, nil)
+		var retryRun RetryFunc
+		if len(retry) > 0 {
+			retryRun = retry[0]
+		}
+		done <- Serve(ctx, socket, Initialize{Protocol: 1, MinimumProtocol: 1, Bot: "test-bot", Version: "1.2.3", Capabilities: []string{"run", "progress"}}, run, retryRun, nil)
 	}()
 	client := testClient(t, socket)
 	for range 50 {
@@ -150,5 +154,59 @@ func TestShutdownEndpointStopsServe(t *testing.T) {
 	_ = response.Body.Close()
 	if response.StatusCode != http.StatusAccepted {
 		t.Fatalf("shutdown returned HTTP %d", response.StatusCode)
+	}
+}
+
+func TestRetryEndpointResetsBudgetWithoutRunning(t *testing.T) {
+	runs := 0
+	var retried []Request
+	client, _ := startWorker(t, func(context.Context, Request, func(Progress)) (Result, error) {
+		runs++
+		return Result{}, nil
+	}, func(_ context.Context, request Request) error {
+		retried = append(retried, request)
+		if request.StateDirectory == "" {
+			return errors.New("no pending release")
+		}
+		return nil
+	})
+	post := func(body string) (int, string) {
+		t.Helper()
+		resp, err := client.Post("http://worker/v1/retry", "application/json", strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		return resp.StatusCode, string(data)
+	}
+	if status, body := post(`{"protocol":1,"remote":"https://example.invalid/repo.git","state_directory":"/state"}`); status != http.StatusOK || !strings.Contains(body, `"scheduled"`) {
+		t.Fatalf("retry was not scheduled: %d %s", status, body)
+	}
+	if status, body := post(`{"protocol":1,"remote":"https://example.invalid/repo.git"}`); status != http.StatusConflict || !strings.Contains(body, "no pending release") {
+		t.Fatalf("missing job was not a conflict: %d %s", status, body)
+	}
+	if status, _ := post(`{"protocol":2}`); status != http.StatusPreconditionFailed {
+		t.Fatalf("wrong protocol accepted: %d", status)
+	}
+	if status, _ := post(`{"protocol":1,"unknown":true}`); status != http.StatusBadRequest {
+		t.Fatalf("unknown field accepted: %d", status)
+	}
+	if len(retried) != 2 || retried[0].StateDirectory != "/state" || runs != 0 {
+		t.Fatalf("retry ran work or lost its request: retried=%d runs=%d", len(retried), runs)
+	}
+}
+
+func TestRetryEndpointIsUnsupportedWithoutHandler(t *testing.T) {
+	client, _ := startWorker(t, func(context.Context, Request, func(Progress)) (Result, error) {
+		return Result{}, nil
+	})
+	resp, err := client.Post("http://worker/v1/retry", "application/json", strings.NewReader(`{"protocol":1}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("unsupported retry answered %d", resp.StatusCode)
 	}
 }

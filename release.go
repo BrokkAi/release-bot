@@ -254,6 +254,14 @@ func (e *engine) resume(ctx context.Context, s *State) error {
 			}
 			// A speculative receipt may simply have no remote tag yet. Keep
 			// the publisher's actionable failure for the preparation agent.
+			if candidate == j.Candidate && j.Candidate != nil &&
+				reflect.DeepEqual(j.Candidate.Plan, j.Plan) && j.Failure == err.Error() {
+				// The publisher already retried this exact failure once without
+				// changing it, so it needs a code or workflow repair that only
+				// preparation may make.
+				j.NeedsPreparation = true
+				e.log.Info("Repeated publication verification failure; requesting preparation repair", "tag", candidate.Tag, "failure", j.Failure)
+			}
 			if candidate == j.Candidate || j.Failure == "" {
 				j.Failure = err.Error()
 			}

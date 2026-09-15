@@ -27,22 +27,31 @@ func workerCommand(ctx context.Context, args []string, version string) error {
 	if fs.NArg() != 0 || *socket == "" {
 		return fmt.Errorf("worker requires exactly one --socket PATH")
 	}
-	return worker.Serve(ctx, *socket, worker.Initialize{
-		Protocol: worker.ProtocolVersion, MinimumProtocol: worker.MinimumProtocol,
-		Bot: "release-bot", Version: version, Capabilities: []string{"run", "progress", "release"},
-	}, func(ctx context.Context, request worker.Request, progress func(worker.Progress)) (worker.Result, error) {
-		cfg := bot.DefaultConfig()
-		cfg.Remote = request.Remote
-		cfg.Branch = request.Branch
-		cfg.Directory = request.Directory
-		cfg.StateDirectory = request.StateDirectory
-		cfg.Agent = request.Agent
-		cfg.GitHub.Repo = request.Repo
-		cfg.GitHub.Host = request.Host
-		cfg.Verify = request.Verify
+	run := func(ctx context.Context, request worker.Request, progress func(worker.Progress)) (worker.Result, error) {
 		ctx = bot.WithProgress(ctx, func(p bot.Progress) {
 			progress(worker.Progress{Phase: p.Phase, Task: p.Task})
 		})
-		return worker.Result{}, bot.Run(ctx, cfg, slog.Default(), true, false)
-	}, slog.Default())
+		return worker.Result{}, bot.Run(ctx, workerConfig(request), slog.Default(), true, false)
+	}
+	retry := func(_ context.Context, request worker.Request) error {
+		return bot.Retry(workerConfig(request))
+	}
+	return worker.Serve(ctx, *socket, worker.Initialize{
+		Protocol: worker.ProtocolVersion, MinimumProtocol: worker.MinimumProtocol,
+		Bot: "release-bot", Version: version, Capabilities: []string{"run", "progress", "release", "retry"},
+	}, run, retry, slog.Default())
+}
+
+// workerConfig applies this bot's defaults to the workspace Town named.
+func workerConfig(request worker.Request) bot.Config {
+	cfg := bot.DefaultConfig()
+	cfg.Remote = request.Remote
+	cfg.Branch = request.Branch
+	cfg.Directory = request.Directory
+	cfg.StateDirectory = request.StateDirectory
+	cfg.Agent = request.Agent
+	cfg.GitHub.Repo = request.Repo
+	cfg.GitHub.Host = request.Host
+	cfg.Verify = request.Verify
+	return cfg
 }

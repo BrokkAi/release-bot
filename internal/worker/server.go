@@ -90,14 +90,21 @@ type Event struct {
 
 type RunFunc func(context.Context, Request, func(Progress)) (Result, error)
 
+// RetryFunc lifts a pending job's exhausted attempt budget for the workspace
+// named by the request. It runs no agent; the next run resumes the job.
+type RetryFunc func(context.Context, Request) error
+
 type server struct {
 	info     Initialize
 	run      RunFunc
+	retry    RetryFunc
 	stop     chan struct{}
 	stopOnce sync.Once
 }
 
-func Serve(ctx context.Context, socketPath string, info Initialize, run RunFunc, log *slog.Logger) error {
+// Serve answers Town on the private socket until shutdown. A nil retry leaves
+// POST /v1/retry unsupported.
+func Serve(ctx context.Context, socketPath string, info Initialize, run RunFunc, retry RetryFunc, log *slog.Logger) error {
 	if strings.TrimSpace(socketPath) == "" {
 		return errors.New("worker socket path is required")
 	}
@@ -125,7 +132,7 @@ func Serve(ctx context.Context, socketPath string, info Initialize, run RunFunc,
 		return fmt.Errorf("secure worker socket: %w", err)
 	}
 	defer func() { _ = os.Remove(socketPath) }()
-	s := &server{info: info, run: run, stop: make(chan struct{})}
+	s := &server{info: info, run: run, retry: retry, stop: make(chan struct{})}
 	httpServer := &http.Server{
 		Handler:           s.handler(),
 		ReadHeaderTimeout: 5 * time.Second,
@@ -162,6 +169,7 @@ func (s *server) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/initialize", s.initialize)
 	mux.HandleFunc("POST /v1/runs", s.runs)
+	mux.HandleFunc("POST /v1/retry", s.retryRun)
 	mux.HandleFunc("POST /v1/shutdown", s.shutdown)
 	return mux
 }
@@ -170,24 +178,52 @@ func (s *server) initialize(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, s.info)
 }
 
-func (s *server) runs(w http.ResponseWriter, r *http.Request) {
+// readRequest decodes one strict protocol request or writes the rejection.
+func readRequest(w http.ResponseWriter, r *http.Request) (Request, bool) {
+	var request Request
 	if value := r.Header.Get("Content-Type"); !strings.HasPrefix(value, contentType) {
 		http.Error(w, "Content-Type must be application/json\n", http.StatusUnsupportedMediaType)
-		return
+		return request, false
 	}
-	var request Request
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequest))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&request); err != nil {
-		http.Error(w, "Invalid worker run request: "+err.Error()+"\n", http.StatusBadRequest)
-		return
+		http.Error(w, "Invalid worker request: "+err.Error()+"\n", http.StatusBadRequest)
+		return request, false
 	}
 	if err := decoder.Decode(new(any)); !errors.Is(err, io.EOF) {
-		http.Error(w, "Expected one JSON run request\n", http.StatusBadRequest)
-		return
+		http.Error(w, "Expected one JSON request\n", http.StatusBadRequest)
+		return request, false
 	}
 	if request.Protocol != ProtocolVersion {
 		writeJSON(w, http.StatusPreconditionFailed, map[string]any{"error": "protocol version not supported", "protocol": ProtocolVersion})
+		return request, false
+	}
+	return request, true
+}
+
+// retryRun resets the pending release's attempt budget so the next run resumes
+// it. It never starts an agent. A missing pending job or a workspace error is a
+// conflict, not a transport failure.
+func (s *server) retryRun(w http.ResponseWriter, r *http.Request) {
+	if s.retry == nil {
+		http.Error(w, "This worker does not support retry\n", http.StatusNotFound)
+		return
+	}
+	request, ok := readRequest(w, r)
+	if !ok {
+		return
+	}
+	if err := s.retry(r.Context(), request); err != nil {
+		writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"retry": "scheduled"})
+}
+
+func (s *server) runs(w http.ResponseWriter, r *http.Request) {
+	request, ok := readRequest(w, r)
+	if !ok {
 		return
 	}
 	w.Header().Set("Content-Type", streamType)
