@@ -62,6 +62,9 @@ expiry, then discards it without logging or saving it. npm must accept the
 configured repository/workflow/environment trust for each package; public
 metadata or a local developer login is not authorization evidence. See the
 [npm registry OIDC API](https://api-docs.npmjs.com/#tag/OIDC).
+The exchange establishes package-scoped identity evidence. It does not prove
+permission for direct publication rather than staging; npm enforces that grant
+on the first final registry upload. Keep the GitHub draft private if upload fails.
 The existing trusted publishers must name BrokkAi/release-bot,
 `publish-packages.yml`, and `packages-publish`. A legacy `NPM_TOKEN` secret
 blocks this check, because checking OIDC would not validate that other identity.

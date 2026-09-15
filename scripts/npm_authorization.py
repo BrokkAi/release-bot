@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate the configured npm OIDC publisher without uploading a package.
+"""Check package-scoped npm OIDC exchanges without uploading a package.
 
 Uses npm's documented package-scoped token exchange API:
 https://api-docs.npmjs.com/#tag/OIDC
@@ -42,9 +42,9 @@ def check():
         result = request_json(endpoint, identity, "POST")
         expires = datetime.datetime.fromisoformat(result["expires"].replace("Z", "+00:00"))
         if result.get("token_type") != "oidc" or not result.get("token") or expires <= datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=5):
-            raise ValueError(f"Missing or expiring package-scoped publishing token for {package}")
+            raise ValueError(f"Missing or expiring package-scoped OIDC token for {package}")
         del result
-        print(f"npm accepted this Actions publisher for {package}; package-scoped token expires {expires.isoformat()}")
+        print(f"npm accepted package-scoped OIDC exchange for {package}; token expires {expires.isoformat()}")
 
 
 if __name__ == "__main__":
