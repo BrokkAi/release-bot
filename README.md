@@ -126,6 +126,43 @@ output. `--plain` and `--json` disable the dashboard and are mutually exclusive.
 `NO_COLOR` disables colors. `status`, `version`, and help retain their existing
 output and never open the dashboard.
 
+## Local release history
+
+`brb history` lists the latest 100 bot-verified receipts, oldest verification
+first. Equal timestamps sort by tag, then commit; unknown legacy times appear
+first. Use `brb history --tag v1.2.3` for the exact commit, publication URL and
+saved destination plan, including versions, publishing environments, check
+commands, agent-supplied evidence and required workflows. All receipts matching
+the exact tag are returned if different commits used that tag.
+
+```sh
+brb history --config /path/to/release-bot.json
+brb history --config /path/to/release-bot.json --tag v1.2.3
+brb history --config /path/to/release-bot.json --json
+```
+
+JSON output contains `meaning` and a `receipts` array, with each receipt's
+`verified_at` and saved `result`; `--tag` filters that array. An unknown tag is
+an error. With explicit local configuration these commands only read local
+configuration and state: they do not launch an agent, query GitHub, run checks
+or modify state. Without configuration, normal repository discovery applies.
+
+Receipts describe historical successful daemon verification, not current
+publication health. Result detail and plan check evidence are agent-supplied
+text, separate from that recorded verification outcome. These are private local
+diagnostics, not tamper-proof audit evidence. No live reverification or transcript
+archive is included.
+
+History is scoped to the workspace's repository/branch identity, deduplicated
+by tag and commit, and saved atomically with baseline advancement only after
+successful verification (including reconciliation). Partial publication adds no
+receipt. Older state remains readable: only its available successful LastResult
+is seeded, using its saved release time or explicitly showing an unknown time
+(`verified_at` omitted in JSON). Reading does not persist migration. Older lost
+receipts cannot be reconstructed. Retain the state directory across restarts;
+receipts beyond the latest 100 are discarded. The dashboard and `status` still
+show the last verified receipt and pending job.
+
 ## Runtime requirements and optional configuration
 
 Runtime requirements are Linux/macOS, Git, Codex (or another authenticated ACP agent), and `gh` for GitHub repositories. Existing agent, Git and registry credentials are used. If `codex-acp` is installed, the bot uses it. Otherwise it automatically launches the maintained [Codex ACP adapter](https://github.com/agentclientprotocol/codex-acp) through `npx --yes @agentclientprotocol/codex-acp`; Node.js must be installed and the first launch may download the adapter.

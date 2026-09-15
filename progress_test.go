@@ -48,6 +48,9 @@ func TestProgressTracksVerifiedReleaseAndRecovery(t *testing.T) {
 			}
 			last := snapshots[len(snapshots)-1]
 			if !complete {
+				if len(fixtureState(t, f).VerifiedHistory()) != 0 {
+					t.Fatal("partial publication recorded in history")
+				}
 				if last.LastTag != "" || last.Releases[0].Status == "released" {
 					t.Fatal("partial publication counted as verified")
 				}
@@ -57,6 +60,15 @@ func TestProgressTracksVerifiedReleaseAndRecovery(t *testing.T) {
 					t.Fatal(err)
 				}
 				last = snapshots[len(snapshots)-1]
+			}
+			if receipts := fixtureState(t, f).VerifiedHistory(); len(receipts) != 1 || receipts[0].Result.Plan == nil {
+				t.Fatal("verified receipt missing from history")
+			}
+			if err := f.engine.cycle(context.Background(), false); err != nil {
+				t.Fatal(err)
+			}
+			if len(fixtureState(t, f).VerifiedHistory()) != 1 {
+				t.Fatal("restart duplicated receipt")
 			}
 			if last.Phase != "complete" || last.LastTag != "v1.0.0" || len(last.Releases) != 1 || last.Releases[0].Status != "released" || calls != 2 {
 				t.Fatalf("wrong verified result or repeated agent work: %+v", last)

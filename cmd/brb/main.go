@@ -53,16 +53,17 @@ func executeWithRun(ctx context.Context, args []string, logger *slog.Logger, run
 			return versionCommand(args[1:], os.Stdout)
 		case "worker":
 			return workerCommand(ctx, args[1:], buildVersion())
-		case "run", "once", "status", "retry":
+		case "run", "once", "status", "history", "retry":
 			mode = args[0]
 			args = args[1:]
 		}
 	}
 	flags := flag.NewFlagSet(mode, flag.ContinueOnError)
 	flags.Usage = func() {
-		fmt.Fprintln(flags.Output(), "Usage: brb [repository path or URL] [options]\n\nRun inside a repository to detect its remote and default branch and start working.\nNo configuration file is needed. Repository instructions and checks are discovered\nby the agent. Existing run, once, status, retry, worker and version commands are also supported.\n\nOptions:")
+		fmt.Fprintln(flags.Output(), "Usage: brb [repository path or URL] [options]\n\nRun inside a repository to detect its remote and default branch and start working.\nNo configuration file is needed. Repository instructions and checks are discovered\nby the agent. Existing run, once, status, history, retry, worker and version commands are also supported.\n\nOptions:")
 		flags.PrintDefaults()
 	}
+	tag := flags.String("tag", "", "select receipt details by exact tag (history only)")
 	file := flags.String("config", "", "optional JSON configuration for advanced settings")
 	branch := flags.String("branch", "", "branch to release (default: repository's default branch)")
 	selectedAgent := flags.String("agent", "", "ACP agent executable (default: Codex)")
@@ -77,7 +78,7 @@ func executeWithRun(ctx context.Context, args []string, logger *slog.Logger, run
 	var agentArgs []string
 	flags.Func("agent-arg", "argument for the agent; repeat as needed", func(value string) error { agentArgs = append(agentArgs, value); return nil })
 	once := flags.Bool("once", mode == "once", "check/work once, then exit")
-	jsonOutput := flags.Bool("json", false, "emit JSON logs and status")
+	jsonOutput := flags.Bool("json", false, "emit JSON logs, status or history")
 	force := flags.Bool("force", false, "ignore cadence in once mode; still requires unreleased commits")
 	if err := parseInterspersed(flags, args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -97,8 +98,11 @@ func executeWithRun(ctx context.Context, args []string, logger *slog.Logger, run
 	if *force && !*once {
 		return errors.New("use --once with --force")
 	}
-	if (mode == "status" || mode == "retry") && (*force || *once) {
+	if (mode == "status" || mode == "history" || mode == "retry") && (*force || *once) {
 		return errors.New("--once and --force apply to run or once")
+	}
+	if *tag != "" && mode != "history" {
+		return errors.New("--tag applies only to history")
 	}
 	var cfg bot.Config
 	var err error
@@ -162,6 +166,8 @@ func executeWithRun(ctx context.Context, args []string, logger *slog.Logger, run
 		return err
 	}
 	switch mode {
+	case "history":
+		return historyCommand(cfg, *tag, *jsonOutput, os.Stdout)
 	case "status":
 		state, err := bot.ReadState(cfg)
 		if err != nil {
