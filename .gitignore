@@ -6,3 +6,9 @@
 /dist/
 __pycache__/
 /brb
+
+.worktrees/
+.claude/
+.codex/
+.mjolnir/
+.belgr/
