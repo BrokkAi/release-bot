@@ -185,7 +185,7 @@ The agent discovers the repository-specific checks. Their correctness and destin
 "preflight": ["/opt/release-checks/publishability"]
 ```
 
-After publishing, every destination's verification command must pass as well as the built-in GitHub checks and optional operator verifier. Missing registry artifacts keep the job pending even if its GitHub release exists. Preflight prevents foreseeable partial releases; network failures and non-transactional registries can still fail mid-publication. The publication skill directs the agent to stage privately where possible, publish the final release/announcement last, and reconcile partial artifacts on retry. The phase boundary is an agent instruction and daemon orchestration rule, not an OS/network sandbox.
+After publishing, every destination's verification command must pass as well as the built-in GitHub checks and optional operator verifier. Destination and operator commands run in a temporary detached worktree at the exact released commit, checked for the expected revision and a clean tree before and after each command. Recovery preserves the preparation workspace and unfinished edits, including when the attempt budget is exhausted. Missing registry artifacts keep the job pending even if its GitHub release exists. Preflight prevents foreseeable partial releases; network failures and non-transactional registries can still fail mid-publication. The publication skill directs the agent to stage privately where possible, publish the final release/announcement last, and reconcile partial artifacts on retry. The phase boundary is an agent instruction and daemon orchestration rule, not an OS/network sandbox.
 
 ## GitHub is built in
 
@@ -221,7 +221,7 @@ Set `agent.command` to an executable and argument array. `agent.environment` sup
 }
 ```
 
-`verify` is an optional extra command for any Git host. The agent already supplies mandatory destination-specific verification commands in its plan. An operator verifier runs directly as an argument array, in the checkout, with `RELEASE_TAG`, `RELEASE_COMMIT`, `RELEASE_TARGET`, `RELEASE_URL`, `RELEASE_REMOTE`, and `RELEASE_BRANCH` in its environment. Exit zero only when the exact release's checks, artifacts and registry publication have succeeded. Keep the verifier outside the agent's writable checkout. There is no shell expansion unless you explicitly configure a shell.
+`verify` is an optional extra command for any Git host. The agent already supplies mandatory destination-specific verification commands in its plan. An operator verifier runs directly as an argument array, in the isolated verification worktree, with `RELEASE_TAG`, `RELEASE_COMMIT`, `RELEASE_TARGET`, `RELEASE_URL`, `RELEASE_REMOTE`, and `RELEASE_BRANCH` in its environment. Exit zero only when the exact release's checks, artifacts and registry publication have succeeded. Keep the verifier outside the agent's writable checkout. There is no shell expansion unless you explicitly configure a shell.
 
 ```json
 "verify": ["/opt/release-checks/verify-publication"]
