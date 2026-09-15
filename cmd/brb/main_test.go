@@ -313,6 +313,34 @@ func TestEarlyReleaseDurationFlags(t *testing.T) {
 			t.Fatalf("%v: %v", tc.args, err)
 		}
 	}
+	cfg.Triage = false
+	if data, err = json.Marshal(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(file, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		args []string
+		want bool
+	}{
+		{[]string{source}, true},
+		{[]string{source, "--triage=false"}, false},
+		{[]string{"--config", file}, false},
+		{[]string{"--config", file, "--triage"}, true},
+	} {
+		called := false
+		err := executeWithRun(context.Background(), tc.args, slog.New(slog.NewTextHandler(io.Discard, nil)), func(ctx context.Context, cfg bot.Config, log *slog.Logger, once, force bool) error {
+			called = true
+			if cfg.Triage != tc.want {
+				t.Fatalf("%v: triage=%v", tc.args, cfg.Triage)
+			}
+			return nil
+		})
+		if err != nil || !called {
+			t.Fatalf("%v: %v", tc.args, err)
+		}
+	}
 	for _, arg := range []string{"--minimum-gap=-1s", "--quiet=-1m", "--quiet=bad", "--minimum-gap=25h"} {
 		if err := executeWithRun(context.Background(), []string{source, arg}, slog.Default(), func(context.Context, bot.Config, *slog.Logger, bool, bool) error {
 			t.Fatal("invalid duration started work")

@@ -35,17 +35,18 @@ type Job struct {
 	NeedsPreparation bool             `json:"needs_preparation,omitempty"`
 }
 type State struct {
-	Format         int       `json:"format"`
-	Remote         string    `json:"remote"`
-	Branch         string    `json:"branch"`
-	Directory      string    `json:"directory"`
-	Released       string    `json:"released"`
-	ReleasedAt     time.Time `json:"released_at"`
-	Observed       string    `json:"observed"`
-	ObservedRemote string    `json:"observed_remote,omitempty"`
-	ChangedAt      time.Time `json:"changed_at"`
-	Job            *Job      `json:"job,omitempty"`
-	LastResult     *Result   `json:"last_result,omitempty"`
+	Format         int           `json:"format"`
+	Remote         string        `json:"remote"`
+	Branch         string        `json:"branch"`
+	Directory      string        `json:"directory"`
+	Released       string        `json:"released"`
+	ReleasedAt     time.Time     `json:"released_at"`
+	Observed       string        `json:"observed"`
+	ObservedRemote string        `json:"observed_remote,omitempty"`
+	ChangedAt      time.Time     `json:"changed_at"`
+	Job            *Job          `json:"job,omitempty"`
+	LastResult     *Result       `json:"last_result,omitempty"`
+	Triage         *TriageRecord `json:"triage,omitempty"`
 }
 
 func ReadState(cfg Config) (*State, error) {

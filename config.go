@@ -56,6 +56,8 @@ type Config struct {
 	VerificationTimeout Duration     `json:"verification_timeout"`
 	RetryDelay          Duration     `json:"retry_delay"`
 	Attempts            int          `json:"attempts"`
+	Triage              bool         `json:"triage"`
+	TriageTimeout       Duration     `json:"triage_timeout"`
 	Verify              []string     `json:"verify,omitempty"`
 	Preflight           []string     `json:"preflight,omitempty"`
 }
@@ -67,6 +69,7 @@ func DefaultConfig() Config {
 		Agent:            AgentConfig{Command: []string{"codex-acp"}}, GitHub: GitHubConfig{Host: "github.com"},
 		Poll: Duration(5 * time.Minute), Daily: Duration(24 * time.Hour), MinimumGap: Duration(2 * time.Hour), Quiet: Duration(15 * time.Minute), BurstWindow: Duration(2 * time.Hour), Burst: 5,
 		Timeout: Duration(2 * time.Hour), VerificationTimeout: Duration(30 * time.Minute), RetryDelay: Duration(15 * time.Minute), Attempts: 3,
+		Triage: true, TriageTimeout: Duration(10 * time.Minute),
 	}
 }
 func ReadConfig(filename string) (Config, error) {
@@ -188,9 +191,9 @@ func (c Config) Validate() error {
 			return errors.New("required workflow cannot be empty")
 		}
 	}
-	for _, d := range []Duration{c.Poll, c.Daily, c.BurstWindow, c.Timeout, c.VerificationTimeout, c.RetryDelay} {
+	for _, d := range []Duration{c.Poll, c.Daily, c.BurstWindow, c.Timeout, c.VerificationTimeout, c.RetryDelay, c.TriageTimeout} {
 		if d <= 0 {
-			return errors.New("poll, daily, burst_window, timeout, verification_timeout and retry_delay must be positive")
+			return errors.New("poll, daily, burst_window, timeout, verification_timeout, retry_delay and triage_timeout must be positive")
 		}
 	}
 	if c.Quiet < 0 || c.MinimumGap < 0 || c.Burst < 0 || c.Attempts < 1 || c.MinimumGap > c.Daily {

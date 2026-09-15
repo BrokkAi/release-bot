@@ -36,6 +36,18 @@ func writeTestFile(t *testing.T, path, content string) {
 type scriptedAgent func(context.Context, string) (Result, error)
 
 func (s scriptedAgent) Execute(ctx context.Context, p string) (Result, error) { return s(ctx, p) }
+func (s scriptedAgent) Triage(context.Context, string) (TriageDecision, error) {
+	return TriageDecision{Decision: "wait", Reason: "scripted agent"}, nil
+}
+
+type triageAgent struct {
+	scriptedAgent
+	triage func(context.Context, string) (TriageDecision, error)
+}
+
+func (a triageAgent) Triage(ctx context.Context, p string) (TriageDecision, error) {
+	return a.triage(ctx, p)
+}
 
 type fixture struct {
 	engine                             *engine

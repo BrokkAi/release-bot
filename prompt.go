@@ -16,6 +16,9 @@ var githubSkill string
 //go:embed skills/preflight.md
 var preflightSkill string
 
+//go:embed skills/triage.md
+var triageSkill string
+
 func releasePrompt(cfg Config, state *State) string {
 	data, _ := json.MarshalIndent(struct {
 		Remote       string       `json:"remote"`

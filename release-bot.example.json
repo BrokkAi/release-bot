@@ -21,5 +21,7 @@
   "timeout": "2h",
   "verification_timeout": "30m",
   "retry_delay": "15m",
-  "attempts": 3
+  "attempts": 3,
+  "triage": true,
+  "triage_timeout": "10m"
 }
